@@ -146,6 +146,11 @@ It checks that:
 Disabling the loop check or the receipt verification in `MeshRouter` makes
 these tests fail — they were checked that way.
 
+`RemoteBankIntegrationTest` starts the real mock bank (`node src/server.js`)
+on a free port and drives it with `RemoteBank`, the code a bridge phone runs:
+enrolment, settlement with a verifiable proof, duplicates, refusal codes, and
+an absent bank. It is skipped where Node is not installed.
+
 ## Status
 
 Built and unit-tested: chunking, UUIDs, the packet envelope, a JVM-signed

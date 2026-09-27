@@ -89,11 +89,15 @@ class RemoteBank(private val baseUrl: String) : Bank {
      * Has to happen while online — the whole point is that the payer is
      * offline at the moment of paying, so its account must already exist.
      */
-    suspend fun enroll(openingPaise: Int): Result<Enrollment> = withContext(Dispatchers.IO) {
+    suspend fun enroll(
+        openingPaise: Int,
+        payerPubKey: String = DeviceKey.publicKeySpki(),
+        label: String = android.os.Build.MODEL ?: "Android",
+    ): Result<Enrollment> = withContext(Dispatchers.IO) {
         runCatching {
             val (code, json) = post("/v1/enroll", JSONObject().apply {
-                put("payerPubKey", DeviceKey.publicKeySpki())
-                put("label", android.os.Build.MODEL ?: "Android")
+                put("payerPubKey", payerPubKey)
+                put("label", label)
                 put("openingPaise", openingPaise)
             }.toString())
             check(code in 200..299) { json?.optString("message") ?: "enrolment refused ($code)" }
