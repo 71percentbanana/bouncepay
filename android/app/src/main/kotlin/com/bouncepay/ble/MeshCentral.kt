@@ -17,17 +17,28 @@ import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import com.bouncepay.model.Packet
+import com.bouncepay.model.SignedReceipt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 
-/** What happened when we tried to hand a packet to a peer. */
-sealed interface Delivery {
-    data class Sent(val peerId: String) : Delivery
-    data class Skipped(val peerId: String, val why: String) : Delivery
-    data class Failed(val why: String) : Delivery
+/** What to hand one peer, decided once its account id is known. */
+data class Outgoing(val packets: List<Packet>, val receipts: List<SignedReceipt>) {
+    val isEmpty: Boolean get() = packets.isEmpty() && receipts.isEmpty()
 }
+
+/**
+ * What happened in one connection. Partial success is normal — a peer can
+ * walk out of range between two packets — so what got through is reported
+ * alongside any error, and the caller records exactly that.
+ */
+data class Exchange(
+    val peerId: String?,
+    val packetsSent: List<String> = emptyList(),
+    val receiptsSent: List<String> = emptyList(),
+    val error: String? = null,
+)
 
 data class Peer(val device: BluetoothDevice, val rssi: Int) {
     val address: String get() = device.address
@@ -86,17 +97,17 @@ class MeshCentral(
     }
 
     /**
-     * Connects to [peer] and hands over [packet], unless the peer has already
-     * carried it.
+     * Connects to [peer], learns who it is, and hands over whatever [plan]
+     * says that peer still needs. [plan] gets null if the id could not be read.
      */
-    suspend fun deliver(packet: Packet, peer: Peer): Delivery {
-        val session = GattSession(context, packet, deviceId)
+    suspend fun exchange(peer: Peer, plan: (peerId: String?) -> Outgoing): Exchange {
+        val session = GattSession(context, deviceId, plan)
         return try {
             withTimeout(OPERATION_TIMEOUT_MS) { session.run(peer) }
         } catch (_: TimeoutCancellationException) {
-            Delivery.Failed("timed out talking to ${peer.address}")
+            session.progress.copy(error = "timed out talking to ${peer.address}")
         } catch (e: Exception) {
-            Delivery.Failed(e.message ?: e::class.java.simpleName)
+            session.progress.copy(error = e.message ?: e::class.java.simpleName)
         } finally {
             session.close()
         }
@@ -109,7 +120,7 @@ class MeshCentral(
 }
 
 /**
- * One connect → discover → read id → write chunks exchange.
+ * One connect → discover → read id → write packets → write receipts exchange.
  *
  * Separate class because each connection needs its own callback state, and
  * reusing a BluetoothGatt across peers is a reliable way to get confusing
@@ -118,10 +129,13 @@ class MeshCentral(
 @SuppressLint("MissingPermission")
 private class GattSession(
     private val context: Context,
-    private val packet: Packet,
     private val selfId: String,
+    private val plan: (String?) -> Outgoing,
 ) {
     private var gatt: BluetoothGatt? = null
+
+    /** What has got through so far; survives a timeout part-way. */
+    @Volatile var progress = Exchange(peerId = null)
 
     private val connected = CompletableDeferred<Boolean>()
     private val discovered = CompletableDeferred<Boolean>()
@@ -188,17 +202,17 @@ private class GattSession(
         }
     }
 
-    suspend fun run(peer: Peer): Delivery {
+    suspend fun run(peer: Peer): Exchange {
         gatt = peer.device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-            ?: return Delivery.Failed("could not open a GATT connection")
+            ?: return Exchange(null, error = "could not open a GATT connection")
 
-        if (!connected.await()) return Delivery.Failed("connection refused by ${peer.address}")
+        if (!connected.await()) return Exchange(null, error = "connection refused by ${peer.address}")
 
-        if (!gatt!!.discoverServices()) return Delivery.Failed("could not start service discovery")
-        if (!discovered.await()) return Delivery.Failed("service discovery failed")
+        if (!gatt!!.discoverServices()) return Exchange(null, error = "could not start service discovery")
+        if (!discovered.await()) return Exchange(null, error = "service discovery failed")
 
         val service = gatt!!.getService(BleIds.SERVICE)
-            ?: return Delivery.Failed("peer does not run BouncePay")
+            ?: return Exchange(null, error = "peer does not run BouncePay")
 
         // Bigger MTU means fewer round trips; failure is survivable.
         gatt!!.requestMtu(BleIds.DESIRED_MTU)
@@ -208,33 +222,44 @@ private class GattSession(
         val peerId = if (idChar != null && gatt!!.readCharacteristic(idChar)) {
             peerIdRead.await()
         } else null
+        progress = Exchange(peerId)
 
-        // Anti-loop. Without this two phones in range of each other hand the
-        // same packet back and forth forever and it never reaches the bridge.
-        if (peerId != null && packet.hops.contains(peerId)) {
-            return Delivery.Skipped(peerId, "already carried this packet")
+        if (peerId == selfId) return progress.copy(error = "that is us")
+
+        // Decided only now, with the peer's id in hand. This is the anti-loop:
+        // a packet whose hop list already names this peer is not offered, so
+        // two phones in range of each other never pass one back and forth.
+        val outgoing = plan(peerId)
+        if (outgoing.isEmpty) return progress
+
+        val packetInbox = service.getCharacteristic(BleIds.CHAR_PACKET_IN)
+        for (packet in outgoing.packets) {
+            if (packetInbox == null) return progress.copy(error = "peer has no packet inbox")
+            val error = writeAll(packetInbox, packet.withHop(selfId).toBytes(), mtu)
+            if (error != null) return progress.copy(error = error)
+            progress = progress.copy(packetsSent = progress.packetsSent + packet.txId)
         }
-        if (peerId == selfId) {
-            return Delivery.Skipped(peerId, "that is us")
+
+        // Older builds of the app have no receipt inbox; that is not a failure.
+        val receiptInbox = service.getCharacteristic(BleIds.CHAR_RECEIPT_IN)
+        if (outgoing.receipts.isNotEmpty() && receiptInbox != null) {
+            val error = writeAll(receiptInbox, SignedReceipt.encodeBatch(outgoing.receipts), mtu)
+            if (error != null) return progress.copy(error = error)
+            progress = progress.copy(receiptsSent = outgoing.receipts.map { it.txId })
         }
 
-        val inbox = service.getCharacteristic(BleIds.CHAR_PACKET_IN)
-            ?: return Delivery.Failed("peer has no inbox characteristic")
+        return progress
+    }
 
-        val outgoing = packet.withHop(selfId)
-        val chunks = Chunking.split(outgoing.toBytes(), mtu)
-
+    /** Writes [data] as chunks, each awaited before the next. Null on success. */
+    private suspend fun writeAll(target: BluetoothGattCharacteristic, data: ByteArray, mtu: Int): String? {
+        val chunks = Chunking.split(data, mtu)
         for ((index, chunk) in chunks.withIndex()) {
             writeAck = CompletableDeferred()
-            if (!writeChunk(inbox, chunk)) {
-                return Delivery.Failed("write rejected at chunk ${index + 1}/${chunks.size}")
-            }
-            if (!writeAck.await()) {
-                return Delivery.Failed("peer did not acknowledge chunk ${index + 1}/${chunks.size}")
-            }
+            if (!writeChunk(target, chunk)) return "write rejected at chunk ${index + 1}/${chunks.size}"
+            if (!writeAck.await()) return "peer did not acknowledge chunk ${index + 1}/${chunks.size}"
         }
-
-        return Delivery.Sent(peerId ?: peer.address)
+        return null
     }
 
     @Suppress("DEPRECATION")

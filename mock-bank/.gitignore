@@ -1,3 +1,6 @@
 # Written when BANK_SNAPSHOT is set; demo state, not source
 *.snapshot.json
 bank-snapshot.json
+
+# The bank's receipt-signing key, created on first run
+bank-key.pem

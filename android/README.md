@@ -73,6 +73,8 @@ Pay  ─►  Packet.create  ─►  PacketStore  ─►  MeshNode loop (every 6 
 | `ble/MeshCentral.kt` | Scanner + GATT client: sends packets, one awaited operation at a time |
 | `bank/Bank.kt` | `RemoteBank` (the mock bank over HTTP) and `EmbeddedBank` (same rules, on-device) |
 | `mesh/MeshNode.kt` | The loop: decides bridge or relay every cycle, settles or forwards |
+| `mesh/ReceiptBook.kt` | Which bank receipts to pass on, and to whom they have been sent |
+| `model/Receipt.kt` | A bank-signed receipt and its BLE batch encoding |
 | `mesh/MeshService.kt` | Foreground service so relaying continues with the screen off |
 
 ### Over the air
@@ -86,12 +88,32 @@ exposes two characteristics:
 - `…0003` **read** — the phone's account id. A sender reads it first and
   skips any phone already in the packet's hop list, so a packet never
   ping-pongs between two phones in range of each other.
+- `…0004` **write** — a batch of bank-signed receipts, chunked the same way.
+
+One connection per neighbour carries everything it still needs: packets it
+has not carried, and receipts it has not been sent.
 
 A hand-off records the receiving phone in the hop list, so each packet goes
-to each neighbour once. The sender keeps its copy until it sees the bank's
-receipt — handing a packet on is not proof it arrived. If several copies
-reach the bank by different routes, the bank settles one and answers the
-rest with the same receipt.
+to each neighbour once — every neighbour, since a copy per route finds the
+bridge fastest. If several copies reach the bank, it settles one and answers
+the rest with the same receipt.
+
+### Getting the answer back to the payer
+
+The payer is usually still offline when its payment settles. So the bridge
+takes the bank's **signed receipt** and passes it back through the mesh the
+same way packets travel forward: each phone offers each fresh receipt to each
+neighbour once, for ten minutes.
+
+Every phone pins the bank's public key whenever it reaches the bank, and
+marks a payment settled only if the receipt verifies against that key. A
+relay can carry a receipt; it cannot invent one. A phone that has never met
+the bank carries receipts on without acting on them.
+
+In the three-phone demo, A flips from *Handed on* to *Settled* with
+"✓ Signed receipt from the bank" shortly after C settles, while A is
+still forced offline. The on-device fallback bank issues no signed receipts,
+so its settlements are not passed back.
 
 ### Guard rails on the phone
 
@@ -104,6 +126,8 @@ rest with the same receipt.
 
 ## Status
 
-Built and unit-tested (chunking, UUIDs, the packet envelope, and a JVM-signed
-packet that the Node bank verifies byte-for-byte). The Bluetooth path has not
+Built and unit-tested: chunking, UUIDs, the packet envelope, a JVM-signed
+packet that the Node bank verifies byte-for-byte, and a bank-signed receipt
+that the phone's code verifies (and rejects when altered or signed by
+another key). The Bluetooth path has not
 yet been exercised on physical phones; that needs two or more handsets.

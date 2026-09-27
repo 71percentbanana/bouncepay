@@ -12,9 +12,11 @@
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { Ledger, fingerprint } from './ledger.js';
 import { settlePacket } from './settle.js';
 import { RejectedError } from './packet.js';
+import { loadBankKey, proveReceipt } from './receipts.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const SNAPSHOT = process.env.BANK_SNAPSHOT ?? null;
@@ -25,8 +27,9 @@ function txIdOf(packet) {
   try { return JSON.parse(packet.payload).txId ?? '-'; } catch { return '-'; }
 }
 
-export function createBank({ snapshotPath = SNAPSHOT } = {}) {
+export function createBank({ snapshotPath = SNAPSHOT, keyPath = null } = {}) {
   const ledger = new Ledger({ snapshotPath });
+  const bankKey = loadBankKey(keyPath);
 
   // Merchant float, so a receiving account exists before the first payment.
   ledger.openAccount('campus-stationery', 'Campus Stationery', 2000_00);
@@ -78,6 +81,8 @@ export function createBank({ snapshotPath = SNAPSHOT } = {}) {
       if (req.method === 'GET' && url.pathname === '/v1/health') {
         return json(res, 200, {
           ok: true, service: 'bouncepay-mock-bank', now: Date.now(),
+          // Phones pin this while online and check every receipt against it.
+          bankPubKey: bankKey.publicKeySpki,
           // Lets the dashboard tell you which URL to type into the phones.
           lan: lanAddresses().map((ip) => `http://${ip}:${req.socket.localPort}`),
         });
@@ -99,7 +104,7 @@ export function createBank({ snapshotPath = SNAPSHOT } = {}) {
         const txId = url.searchParams.get('txId') ?? '';
         const receipt = ledger.existingReceipt(txId);
         return receipt
-          ? json(res, 200, { status: 'SETTLED', receipt })
+          ? json(res, 200, { status: 'SETTLED', receipt, proof: proveReceipt(bankKey, receipt) })
           : json(res, 404, { status: 'UNKNOWN', txId });
       }
 
@@ -114,7 +119,7 @@ export function createBank({ snapshotPath = SNAPSHOT } = {}) {
         const id = fingerprint(payerPubKey);
         const account = ledger.openAccount(id, label ?? id, openingPaise ?? 2000_00);
         ledger.persist();
-        return json(res, 200, { accountId: id, account });
+        return json(res, 200, { accountId: id, account, bankPubKey: bankKey.publicKeySpki });
       }
 
       if (req.method === 'POST' && url.pathname === '/v1/settle') {
@@ -130,7 +135,9 @@ export function createBank({ snapshotPath = SNAPSHOT } = {}) {
         // hops[0] is the payer; every entry after it is one phone-to-phone transfer.
         const transfers = Math.max((packet.hops?.length ?? 1) - 1, 0);
         console.log(`  ${status.padEnd(9)} ${receipt.txId}  ₹${(receipt.amountPaise / 100).toFixed(2)}  via ${transfers} hop(s)`);
-        return json(res, 200, { status, receipt });
+        // The proof is what lets this receipt travel back to an offline payer
+        // through phones that are not trusted to vouch for it.
+        return json(res, 200, { status, receipt, proof: proveReceipt(bankKey, receipt) });
       }
 
       return json(res, 404, { code: 'NOT_FOUND', message: `no route for ${req.method} ${url.pathname}` });
@@ -149,7 +156,7 @@ export function createBank({ snapshotPath = SNAPSHOT } = {}) {
     }
   });
 
-  return { server, ledger };
+  return { server, ledger, bankKey };
 }
 
 function lanAddresses() {
@@ -160,7 +167,10 @@ function lanAddresses() {
 
 // Only start listening when run directly, so tests can import the app.
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop())) {
-  const { server } = createBank();
+  // The key is kept on disk: phones pin it, so a new key on every restart
+  // would make every phone distrust the bank's receipts.
+  const keyPath = process.env.BANK_KEY ?? fileURLToPath(new URL('../bank-key.pem', import.meta.url));
+  const { server } = createBank({ keyPath });
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  BouncePay mock bank listening on :${PORT}`);
     console.log(`  Dashboard                  http://localhost:${PORT}`);

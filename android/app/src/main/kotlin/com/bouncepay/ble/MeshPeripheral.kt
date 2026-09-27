@@ -14,6 +14,7 @@ import android.bluetooth.le.AdvertiseSettings
 import android.content.Context
 import android.util.Log
 import com.bouncepay.model.Packet
+import com.bouncepay.model.SignedReceipt
 
 /**
  * The receiving half of a mesh node.
@@ -31,6 +32,7 @@ class MeshPeripheral(
     private val context: Context,
     private val deviceId: String,
     private val onPacket: (Packet, fromAddress: String) -> Unit,
+    private val onReceipts: (List<SignedReceipt>, fromAddress: String) -> Unit,
 ) {
     private val manager = context.getSystemService(BluetoothManager::class.java)
     private val adapter get() = manager?.adapter
@@ -39,8 +41,10 @@ class MeshPeripheral(
     private var advertiser = adapter?.bluetoothLeAdvertiser
 
     /**
-     * One assembler per peer: two phones may be mid-transfer simultaneously.
-     * Server callbacks arrive on binder threads, so access is synchronised.
+     * One assembler per peer and characteristic: two phones may be
+     * mid-transfer at once, and one phone sends packets and receipts in the
+     * same connection. Server callbacks arrive on binder threads, so access
+     * is synchronised.
      */
     private val assemblers = HashMap<String, Chunking.Assembler>()
 
@@ -68,7 +72,7 @@ class MeshPeripheral(
             if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                 // Drop partial transfers: a peer that vanished mid-packet will
                 // start again from chunk zero when it comes back.
-                synchronized(assemblers) { assemblers.remove(device.address) }
+                synchronized(assemblers) { assemblers.keys.removeAll { it.startsWith(device.address) } }
             }
         }
 
@@ -103,7 +107,8 @@ class MeshPeripheral(
             preparedWrite: Boolean, responseNeeded: Boolean,
             offset: Int, value: ByteArray,
         ) {
-            if (characteristic.uuid != BleIds.CHAR_PACKET_IN) {
+            val uuid = characteristic.uuid
+            if (uuid != BleIds.CHAR_PACKET_IN && uuid != BleIds.CHAR_RECEIPT_IN) {
                 if (responseNeeded) {
                     gattServer?.sendResponse(
                         device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, 0, null)
@@ -118,8 +123,15 @@ class MeshPeripheral(
             }
 
             val complete = synchronized(assemblers) {
-                assemblers.getOrPut(device.address) { Chunking.Assembler() }.accept(value)
+                assemblers.getOrPut("${device.address}/$uuid") { Chunking.Assembler() }.accept(value)
             } ?: return
+
+            if (uuid == BleIds.CHAR_RECEIPT_IN) {
+                runCatching { SignedReceipt.decodeBatch(complete) }
+                    .onSuccess { onReceipts(it, device.address) }
+                    .onFailure { Log.w(TAG, "discarded malformed receipts from ${device.address}: ${it.message}") }
+                return
+            }
 
             runCatching { Packet.fromBytes(complete) }
                 .onSuccess { packet ->
@@ -148,6 +160,13 @@ class MeshPeripheral(
         service.addCharacteristic(
             BluetoothGattCharacteristic(
                 BleIds.CHAR_PACKET_IN,
+                BluetoothGattCharacteristic.PROPERTY_WRITE,
+                BluetoothGattCharacteristic.PERMISSION_WRITE,
+            )
+        )
+        service.addCharacteristic(
+            BluetoothGattCharacteristic(
+                BleIds.CHAR_RECEIPT_IN,
                 BluetoothGattCharacteristic.PROPERTY_WRITE,
                 BluetoothGattCharacteristic.PERMISSION_WRITE,
             )

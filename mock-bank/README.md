@@ -49,12 +49,12 @@ through. The merchant sees one settlement either way.
 | Method | Path | |
 | --- | --- | --- |
 | `GET` | `/` | Dashboard |
-| `GET` | `/v1/health` | Liveness, plus the LAN URLs to give the phones |
+| `GET` | `/v1/health` | Liveness, the bank's receipt key, and the LAN URLs to give the phones |
 | `GET` | `/v1/ledger` | Accounts, recent settlements and refusals |
 | `GET` | `/v1/account?id=` | One account and its history |
-| `GET` | `/v1/receipt?txId=` | Receipt for a settled packet |
-| `POST` | `/v1/enroll` | `{payerPubKey, label?, openingPaise?}` → opens an account (idempotent; never resets a balance) |
-| `POST` | `/v1/settle` | A packet → `{status: SETTLED \| DUPLICATE, receipt}`, or `422 {code, message}` |
+| `GET` | `/v1/receipt?txId=` | Receipt and proof for a settled packet |
+| `POST` | `/v1/enroll` | `{payerPubKey, label?, openingPaise?}` → `{accountId, account, bankPubKey}` (idempotent; never resets a balance) |
+| `POST` | `/v1/settle` | A packet → `{status: SETTLED \| DUPLICATE, receipt, proof}`, or `422 {code, message}` |
 
 The merchant `campus-stationery` is opened on start with a ₹2,000 float.
 
@@ -76,6 +76,28 @@ append themselves; it is provenance, not authorisation.
 
 An account id is `bp_` + the first 8 bytes of SHA-256 over the DER public key,
 in hex — computed identically here and on the phone.
+
+## Signed receipts
+
+Every settlement response carries a `proof`: the receipt as an opaque JSON
+string, signed by the bank's own P-256 key.
+
+```json
+{ "payload": "{\"v\":1,\"kind\":\"receipt\",\"txId\":\"…\",\"amountPaise\":10000,\"payerId\":\"bp_…\",\"payeeId\":\"campus-stationery\",\"settledAt\":1790000000000}",
+  "sig": "base64 DER ECDSA over the payload" }
+```
+
+The bridge phone passes it back through the mesh, so a payer that is still
+offline learns its payment settled. Phones pin the bank's key (from
+`/v1/health` or `/v1/enroll`) whenever they reach the bank, and believe a
+receipt only if it verifies against that key — a relay can carry a receipt
+but cannot forge one.
+
+The key is created as `bank-key.pem` on first run and reused after that, so
+phones stay pinned across restarts. Set `BANK_KEY=path` to keep it elsewhere;
+delete it to rotate (then have each phone reach the bank once to re-pin).
+`test/fixtures/receipt.json` is a receipt signed by this code that the
+Android suite verifies, keeping both sides on one format.
 
 ## Keeping state across restarts
 

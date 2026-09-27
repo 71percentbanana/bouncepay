@@ -26,6 +26,14 @@ object BleIds {
      */
     val CHAR_DEVICE_ID: UUID = UUID.fromString("b0cce000-9a11-4e6d-9f2c-000000000003")
 
+    /**
+     * Write: a batch of bank-signed receipts, chunked like packets.
+     *
+     * Receipts flow the other way from payments — from the bridge back
+     * towards the payer — so an offline payer learns its payment settled.
+     */
+    val CHAR_RECEIPT_IN: UUID = UUID.fromString("b0cce000-9a11-4e6d-9f2c-000000000004")
+
     /** Standard descriptor id, needed when a characteristic supports notify. */
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 

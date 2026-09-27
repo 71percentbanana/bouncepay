@@ -1,0 +1,14 @@
+{
+  "bankPubKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIxmnFwslj4ujcpB9uRekoVTRAwhglRZuSBou9G1LeJ+trwFo9YTywEzt1AI1SFM8GTVBL2wYjJGTYKgYBVU/Hw==",
+  "receipt": {
+    "txId": "7c1e2f3a-0000-4000-8000-000000000001",
+    "amountPaise": 10000,
+    "payerId": "bp_0011223344556677",
+    "payeeId": "campus-stationery",
+    "settledAt": 1790000000000
+  },
+  "proof": {
+    "payload": "{\"v\":1,\"kind\":\"receipt\",\"txId\":\"7c1e2f3a-0000-4000-8000-000000000001\",\"amountPaise\":10000,\"payerId\":\"bp_0011223344556677\",\"payeeId\":\"campus-stationery\",\"settledAt\":1790000000000}",
+    "sig": "MEUCIQCA0tf93vIyd19mc1w+nXPcgooTEDaQi4tdbwukNHROngIgLKxJcDgoZyiyMp1B8WkbZ2nDjozKDZgYXsTdYyOoBYo="
+  }
+}

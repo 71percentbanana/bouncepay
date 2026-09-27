@@ -36,6 +36,13 @@ data class Settings(
      * handing out authorisations it cannot honour.
      */
     val walletPaise: Int = 0,
+
+    /**
+     * The bank's public key, pinned whenever this phone talks to the bank
+     * directly. Receipts that arrive over the mesh are only believed if they
+     * verify against it.
+     */
+    val bankPubKey: String? = null,
 )
 
 /** Persisted settings, observable so the UI updates when they change. */
@@ -54,6 +61,7 @@ class AppPrefs(context: Context) {
         useFallbackBank = prefs.getBoolean(KEY_FALLBACK, true),
         enrolled = prefs.getBoolean(KEY_ENROLLED, false),
         walletPaise = prefs.getInt(KEY_WALLET, 0),
+        bankPubKey = prefs.getString(KEY_BANK_KEY, null),
     )
 
     fun update(transform: (Settings) -> Settings) = synchronized(this) {
@@ -64,6 +72,7 @@ class AppPrefs(context: Context) {
             putBoolean(KEY_FALLBACK, next.useFallbackBank)
             putBoolean(KEY_ENROLLED, next.enrolled)
             putInt(KEY_WALLET, next.walletPaise)
+            putString(KEY_BANK_KEY, next.bankPubKey)
         }
         _settings.value = next
     }
@@ -84,5 +93,6 @@ class AppPrefs(context: Context) {
         const val KEY_FALLBACK = "useFallbackBank"
         const val KEY_ENROLLED = "enrolled"
         const val KEY_WALLET = "walletPaise"
+        const val KEY_BANK_KEY = "bankPubKey"
     }
 }

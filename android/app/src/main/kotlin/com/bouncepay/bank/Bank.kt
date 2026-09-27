@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import com.bouncepay.crypto.DeviceKey
 import com.bouncepay.model.Packet
+import com.bouncepay.model.SignedReceipt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -21,6 +22,8 @@ sealed interface Settlement {
         val duplicate: Boolean,
         /** Which bank took it — shown to the user so a fallback is never hidden. */
         val source: String,
+        /** Bank-signed, so it can be passed back through the mesh. Null from the fallback. */
+        val proof: SignedReceipt? = null,
     ) : Settlement
 
     data class Rejected(val code: String, val message: String) : Settlement
@@ -47,7 +50,7 @@ fun Context.hasNetwork(): Boolean {
     return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
 
-data class Enrollment(val accountId: String, val balancePaise: Int)
+data class Enrollment(val accountId: String, val balancePaise: Int, val bankPubKey: String?)
 
 /**
  * The settlement service in mock-bank/.
@@ -60,15 +63,24 @@ class RemoteBank(private val baseUrl: String) : Bank {
 
     override val label = "Bank at $baseUrl"
 
-    /** Cheap liveness check, so a bridge can decide quickly between banks. */
-    suspend fun isReachable(): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * Cheap liveness check, so a bridge can decide quickly between banks.
+     * Returns the bank's receipt-signing key, or null if it did not answer.
+     */
+    suspend fun health(): String? = withContext(Dispatchers.IO) {
         runCatching {
             val c = (URL(baseUrl.trimEnd('/') + "/v1/health").openConnection() as HttpURLConnection).apply {
                 connectTimeout = REACHABILITY_TIMEOUT_MS
                 readTimeout = REACHABILITY_TIMEOUT_MS
             }
-            try { c.responseCode == 200 } finally { c.disconnect() }
-        }.getOrDefault(false)
+            try {
+                if (c.responseCode != 200) return@runCatching null
+                val body = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+                if (!body.optBoolean("ok")) null else body.optString("bankPubKey")
+            } finally {
+                c.disconnect()
+            }
+        }.getOrNull()
     }
 
     /**
@@ -88,6 +100,7 @@ class RemoteBank(private val baseUrl: String) : Bank {
             Enrollment(
                 accountId = json!!.getString("accountId"),
                 balancePaise = json.getJSONObject("account").getInt("balancePaise"),
+                bankPubKey = json.optString("bankPubKey").ifBlank { null },
             )
         }
     }
@@ -102,6 +115,7 @@ class RemoteBank(private val baseUrl: String) : Bank {
                     payeeBalancePaise = receipt?.optInt("payeeBalancePaise") ?: 0,
                     duplicate = json.optString("status") == "DUPLICATE",
                     source = "bank",
+                    proof = json.optJSONObject("proof")?.let { runCatching { SignedReceipt.fromJsonObject(it) }.getOrNull() },
                 )
             } else {
                 Settlement.Rejected(

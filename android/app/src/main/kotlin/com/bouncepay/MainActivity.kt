@@ -389,6 +389,13 @@ private fun StatusCard(status: MeshStatus, settings: Settings) {
                 Dot("Visible", status.advertising, SettledGreen)
                 Dot("Peers · ${status.peersInRange}", status.peersInRange > 0, SettledGreen)
             }
+            if (status.receiptsToShare > 0) {
+                Text(
+                    "Passing ${status.receiptsToShare} bank receipt(s) back to their payers",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SettledGreen,
+                )
+            }
             Text(
                 status.activity,
                 style = MaterialTheme.typography.bodyMedium,
@@ -547,6 +554,13 @@ private fun PacketCard(stored: StoredPacket, selfId: String) {
             stored.note?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (stored.receipt != null) {
+                Text(
+                    "✓ Signed receipt from the bank",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = SettledGreen,
+                )
+            }
         }
     }
 }
@@ -594,6 +608,14 @@ private fun SettingsSheet(
             body = "If this phone is online but the bank does not answer, settle locally so a demo still completes. Always labelled.",
             checked = settings.useFallbackBank,
             onChecked = { v -> onChange { it.copy(useFallbackBank = v) } },
+        )
+
+        Text(
+            settings.bankPubKey?.let { "Bank key pinned · …${it.takeLast(10)}" }
+                ?: "Bank key not pinned yet — reach the bank once to trust its receipts",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) { Text("Stop relaying") }

@@ -8,11 +8,12 @@ import com.bouncepay.bank.EmbeddedBank
 import com.bouncepay.bank.RemoteBank
 import com.bouncepay.bank.Settlement
 import com.bouncepay.bank.hasNetwork
-import com.bouncepay.ble.Delivery
 import com.bouncepay.ble.MeshCentral
 import com.bouncepay.ble.MeshPeripheral
+import com.bouncepay.ble.Outgoing
 import com.bouncepay.crypto.DeviceKey
 import com.bouncepay.model.Packet
+import com.bouncepay.model.SignedReceipt
 import com.bouncepay.model.PacketState
 import com.bouncepay.store.AppPrefs
 import com.bouncepay.store.PacketStore
@@ -48,6 +49,8 @@ data class MeshStatus(
     val advertising: Boolean = false,
     val role: Role = Role.RELAY,
     val peersInRange: Int = 0,
+    /** Bank receipts this phone is passing back towards their payers. */
+    val receiptsToShare: Int = 0,
     val activity: String = "Idle",
 )
 
@@ -59,6 +62,8 @@ data class MeshStatus(
  *
  *   * reaches the bank          → it is the bridge, settle what it holds
  *   * cannot reach the bank     → find a peer and hand packets on
+ *   * holds fresh bank receipts → pass them on, so offline payers learn
+ *                                 their payment settled
  *   * nothing to send           → advertise, and carry for others
  *
  * Nobody is designated a relay. A phone becomes one by being in range at the
@@ -81,7 +86,10 @@ class MeshNode(
         context = context,
         deviceId = deviceId,
         onPacket = { packet, from -> onPacketReceived(packet, from) },
+        onReceipts = { receipts, from -> onReceiptsReceived(receipts, from) },
     )
+
+    private val receipts = ReceiptBook()
 
     /**
      * BLE address → account id, learned from every connection.
@@ -160,7 +168,13 @@ class MeshNode(
                 // The bank's balance has not yet seen payments still in flight
                 // from this phone; leave room for them or they would be spent twice.
                 val inFlight = ownPendingPaise()
-                prefs.update { it.copy(enrolled = true, walletPaise = (e.balancePaise - inFlight).coerceAtLeast(0)) }
+                prefs.update {
+                    it.copy(
+                        enrolled = true,
+                        walletPaise = (e.balancePaise - inFlight).coerceAtLeast(0),
+                        bankPubKey = e.bankPubKey ?: it.bankPubKey,
+                    )
+                }
                 return Result.success("Wallet synced with the bank: ${rupees(prefs.current.walletPaise)}")
             }
             if (!settings.useFallbackBank) {
@@ -194,6 +208,43 @@ class MeshNode(
     }
 
     /**
+     * Receipts coming back from the bank's side of the mesh.
+     *
+     * Checked against the pinned bank key before anything is believed: a
+     * relay could otherwise tell a payer its payment went through when it
+     * never left the relay's pocket. A phone that has never met the bank
+     * cannot check, so it carries receipts on without acting on them.
+     */
+    private fun onReceiptsReceived(incoming: List<SignedReceipt>, from: String) {
+        val bankKey = prefs.current.bankPubKey
+        var settledHere = 0
+        var news = false
+        for (receipt in incoming) {
+            val verified = bankKey != null && receipt.verifiedBy(bankKey)
+            if (bankKey != null && !verified) {
+                Log.w(TAG, "dropped a receipt from $from that the bank did not sign")
+                continue
+            }
+            if (receipts.add(receipt)) news = true
+            if (verified && applyReceipt(receipt, "settled · bank receipt came back over the mesh")) settledHere++
+        }
+        if (settledHere > 0) {
+            _status.update { it.copy(activity = "Bank receipt arrived · $settledHere payment(s) settled") }
+        }
+        // Only news is worth a cycle; two phones swapping what both already
+        // have must not keep waking each other.
+        if (news) poke()
+    }
+
+    /** Marks a held packet settled by [receipt]. True if that changed anything. */
+    private fun applyReceipt(receipt: SignedReceipt, note: String): Boolean {
+        val held = store.find(receipt.txId) ?: return false
+        if (held.state == PacketState.SETTLED && held.receipt != null) return false
+        store.markSettled(receipt.txId, note, receipt)
+        return true
+    }
+
+    /**
      * The carry-and-forward loop.
      *
      * Runs in a foreground service, so it keeps going with the screen off —
@@ -219,9 +270,15 @@ class MeshNode(
         val network = !settings.forceOffline && context.hasNetwork()
 
         // A network alone does not make a bridge; reaching the bank does.
+        val bankKey = if (network) remote.health() else null
+        if (!bankKey.isNullOrBlank() && bankKey != settings.bankPubKey) {
+            // Talking to the configured bank directly is the moment to learn
+            // the key its receipts will be signed with.
+            prefs.update { it.copy(bankPubKey = bankKey) }
+        }
         val bank: Bank? = when {
             !network -> null
-            remote.isReachable() -> remote
+            bankKey != null -> remote
             settings.useFallbackBank -> embeddedBank
             else -> null
         }
@@ -232,19 +289,30 @@ class MeshNode(
         }
         _status.update { it.copy(role = role) }
 
-        val pending = store.pending().map { it.packet }
-        if (pending.isEmpty()) {
-            _status.update {
-                it.copy(activity = when (role) {
-                    Role.BRIDGE -> "Bridge · connected to the bank"
-                    Role.BRIDGE_FALLBACK -> "Bridge · bank unreachable, using on-device fallback"
-                    Role.RELAY -> if (settings.forceOffline) "Offline (forced) · ready to relay" else "Offline · ready to relay"
-                })
+        if (bank != null) {
+            val pending = store.pending().map { it.packet }
+            if (pending.isNotEmpty()) settleAll(pending, bank)
+        }
+
+        // Whatever is still unsettled, and every fresh receipt, goes to peers.
+        val toForward = if (bank == null) store.pending().map { it.packet } else emptyList()
+        val toShare = receipts.fresh()
+        _status.update { it.copy(receiptsToShare = toShare.size) }
+
+        if (toForward.isEmpty() && toShare.isEmpty()) {
+            if (store.pending().isEmpty()) {
+                _status.update {
+                    it.copy(activity = when (role) {
+                        Role.BRIDGE -> "Bridge · connected to the bank"
+                        Role.BRIDGE_FALLBACK -> "Bridge · bank unreachable, using on-device fallback"
+                        Role.RELAY -> if (settings.forceOffline) "Offline (forced) · ready to relay" else "Offline · ready to relay"
+                    })
+                }
             }
             return
         }
 
-        if (bank != null) settleAll(pending, bank) else forwardAll(pending)
+        exchangeWithPeers(toForward, toShare)
     }
 
     /** Opens the GATT server when Bluetooth is on, and notices when it is switched off. */
@@ -270,7 +338,11 @@ class MeshNode(
                         packet.txId,
                         if (result.duplicate) "already settled"
                         else "settled by ${result.source} · $transfers hop(s)",
+                        result.proof,
                     )
+                    // Send the proof back the way the packet came, so the
+                    // payer — still offline — finds out.
+                    result.proof?.let { receipts.add(it) }
                     _status.update { it.copy(activity = "Settled ${fields.rupees} via ${result.source}") }
                 }
                 is Settlement.Rejected -> {
@@ -290,59 +362,80 @@ class MeshNode(
         }
     }
 
-    /** Cannot settle here: find someone who might. */
-    private suspend fun forwardAll(packets: List<Packet>) {
+    /**
+     * One pass over the phones in range: packets go to anyone not already in
+     * their hop list, receipts to anyone not yet sent them. A single
+     * connection per peer carries both.
+     *
+     * Packets are offered to every neighbour, not just the first: a copy per
+     * route is how a packet finds the bridge fastest, and the bank settles
+     * exactly one of them.
+     */
+    private suspend fun exchangeWithPeers(packets: List<Packet>, toShare: List<SignedReceipt>) {
         // Android silently drops scans started more than five times in thirty
         // seconds, so a burst of taps must not turn into a burst of scans.
         val sinceLast = System.currentTimeMillis() - lastScanAt
         if (sinceLast < MIN_SCAN_GAP_MS) delay(MIN_SCAN_GAP_MS - sinceLast)
 
-        _status.update { it.copy(activity = "Holding ${packets.size} · scanning for peers…") }
+        _status.update {
+            it.copy(activity = if (packets.isEmpty()) "Passing ${toShare.size} bank receipt(s) back · scanning…"
+                               else "Holding ${packets.size} · scanning for peers…")
+        }
         lastScanAt = System.currentTimeMillis()
         val peers = central.scan(SCAN_DURATION_MS)
         _status.update { it.copy(peersInRange = peers.size) }
 
         if (peers.isEmpty()) {
-            _status.update { it.copy(activity = "No peers in range · holding ${packets.size} packet(s)") }
+            if (packets.isNotEmpty()) {
+                _status.update { it.copy(activity = "No peers in range · holding ${packets.size} packet(s)") }
+            }
             return
         }
 
-        var handedOn = 0
-        for (original in packets) {
-            // Re-read: an earlier hand-off this cycle may have added hops.
-            val packet = store.packets.value.firstOrNull { it.packet.txId == original.txId }?.packet ?: continue
-            val candidates = peers.filter { peer ->
-                val known = knownPeers[peer.address]
-                known == null || known !in packet.hops
+        fun needs(peerId: String?): Outgoing {
+            val forPeer = packets.mapNotNull { original ->
+                // Re-read: a hand-off or a receipt earlier this pass may have
+                // changed it.
+                val current = store.find(original.txId)
+                    ?.takeIf { it.state == PacketState.HELD || it.state == PacketState.FORWARDED }
+                    ?.packet
+                current?.takeIf { peerId == null || peerId !in it.hops }
             }
+            val receiptsForPeer = toShare.filter { peerId == null || !receipts.wasSentTo(it.txId, peerId) }
+            return Outgoing(forPeer, receiptsForPeer)
+        }
 
-            for (peer in candidates) {
-                when (val delivery = central.deliver(packet, peer)) {
-                    is Delivery.Sent -> {
-                        knownPeers[peer.address] = delivery.peerId
-                        store.recordHandoff(packet.txId, delivery.peerId)
-                        handedOn++
-                        _status.update {
-                            it.copy(activity = "Handed ${packet.fields.rupees} to ${delivery.peerId}")
-                        }
-                        // One good hand-off per cycle is enough. The packet stays
-                        // queued until settlement is confirmed, so nothing is lost
-                        // if that peer never gets through.
-                        break
-                    }
-                    is Delivery.Skipped -> {
-                        knownPeers[peer.address] = delivery.peerId
-                        Log.d(TAG, "skipped ${delivery.peerId}: ${delivery.why}")
-                    }
-                    is Delivery.Failed -> Log.d(TAG, "delivery to ${peer.address} failed: ${delivery.why}")
-                }
+        var packetsHanded = 0
+        var receiptsHanded = 0
+        for (peer in peers) {
+            // Don't even connect to a phone we know already has everything.
+            val known = knownPeers[peer.address]
+            if (known != null && needs(known).isEmpty) continue
+
+            val result = central.exchange(peer, ::needs)
+            val peerId = result.peerId
+            if (peerId != null) knownPeers[peer.address] = peerId
+
+            for (txId in result.packetsSent) store.recordHandoff(txId, peerId ?: peer.address)
+            if (peerId != null) result.receiptsSent.forEach { receipts.markSent(it, peerId) }
+            packetsHanded += result.packetsSent.size
+            receiptsHanded += result.receiptsSent.size
+
+            result.error?.let { Log.d(TAG, "exchange with ${peer.address}: $it") }
+            if (result.packetsSent.isNotEmpty() && peerId != null) {
+                _status.update { it.copy(activity = "Handed ${result.packetsSent.size} packet(s) to ${peerId.takeLast(6)}") }
             }
         }
 
-        if (handedOn == 0) {
-            _status.update {
-                it.copy(activity = "${peers.size} peer(s) nearby, none took it yet · holding")
-            }
+        _status.update {
+            it.copy(activity = when {
+                packetsHanded > 0 && receiptsHanded > 0 ->
+                    "Handed on $packetsHanded packet(s) and $receiptsHanded receipt(s)"
+                packetsHanded > 0 -> "Handed on $packetsHanded packet(s) · keeping copies until the bank confirms"
+                receiptsHanded > 0 -> "Passed $receiptsHanded bank receipt(s) back"
+                packets.isNotEmpty() -> "${peers.size} peer(s) nearby, none took it yet · holding"
+                else -> it.activity
+            })
         }
     }
 

@@ -145,4 +145,6 @@ data class StoredPacket(
     val state: PacketState,
     val receivedAt: Long,
     val note: String? = null,
+    /** The bank's signed receipt, once one has been seen for this packet. */
+    val receipt: SignedReceipt? = null,
 )

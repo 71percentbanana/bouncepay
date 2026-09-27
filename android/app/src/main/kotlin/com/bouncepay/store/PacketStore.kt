@@ -3,6 +3,7 @@ package com.bouncepay.store
 import android.content.Context
 import com.bouncepay.model.Packet
 import com.bouncepay.model.PacketState
+import com.bouncepay.model.SignedReceipt
 import com.bouncepay.model.StoredPacket
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -91,9 +92,11 @@ class PacketStore(context: Context) {
         )
     }
 
-    fun markSettled(txId: String, note: String?) = update(txId) {
-        it.copy(state = PacketState.SETTLED, note = note)
+    fun markSettled(txId: String, note: String?, receipt: SignedReceipt? = null) = update(txId) {
+        it.copy(state = PacketState.SETTLED, note = note, receipt = receipt ?: it.receipt)
     }
+
+    fun find(txId: String): StoredPacket? = _packets.value.firstOrNull { it.packet.txId == txId }
 
     fun markRejected(txId: String, reason: String) = update(txId) {
         it.copy(state = PacketState.REJECTED, note = reason)
@@ -127,6 +130,7 @@ class PacketStore(context: Context) {
                 put("state", stored.state.name)
                 put("receivedAt", stored.receivedAt)
                 stored.note?.let { put("note", it) }
+                stored.receipt?.let { put("receipt", it.toJsonObject()) }
             })
         }
         runCatching {
@@ -150,6 +154,7 @@ class PacketStore(context: Context) {
                     state = PacketState.valueOf(o.getString("state")),
                     receivedAt = o.getLong("receivedAt"),
                     note = o.optString("note").ifBlank { null },
+                    receipt = o.optJSONObject("receipt")?.let { SignedReceipt.fromJsonObject(it) },
                 )
             }.getOrNull()   // one corrupt entry must not lose the whole queue
         }

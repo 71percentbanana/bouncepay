@@ -2,7 +2,6 @@ package com.bouncepay.crypto
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.util.Base64
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -10,6 +9,7 @@ import java.security.PrivateKey
 import java.security.PublicKey
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
+import java.util.Base64
 
 /**
  * The device's payment identity.
@@ -66,7 +66,7 @@ object DeviceKey {
 
     /** Base64 DER SPKI — exactly what the settlement service expects. */
     fun publicKeySpki(): String =
-        Base64.encodeToString(publicKey().encoded, Base64.NO_WRAP)
+        Base64.getEncoder().encodeToString(publicKey().encoded)
 
     /**
      * Stable short identifier derived from the public key.
@@ -78,7 +78,7 @@ object DeviceKey {
     fun accountId(): String = accountIdFor(publicKeySpki())
 
     fun accountIdFor(spkiBase64: String): String {
-        val raw = Base64.decode(spkiBase64, Base64.NO_WRAP)
+        val raw = Base64.getDecoder().decode(spkiBase64)
         val digest = MessageDigest.getInstance("SHA-256").digest(raw)
         return "bp_" + digest.take(8).joinToString("") { "%02x".format(it) }
     }
@@ -89,18 +89,22 @@ object DeviceKey {
             initSign(privateKey())
             update(payload.toByteArray(Charsets.UTF_8))
         }
-        return Base64.encodeToString(signature.sign(), Base64.NO_WRAP)
+        return Base64.getEncoder().encodeToString(signature.sign())
     }
 
-    /** Verifies a packet locally — used by the in-app bank fallback. */
+    /**
+     * Verifies [payload] against any P-256 key — a payer's, for the in-app
+     * bank fallback, or the bank's, for a receipt that arrived over the mesh.
+     * Pure JVM, so it also runs in unit tests.
+     */
     fun verify(payload: String, sigBase64: String, spkiBase64: String): Boolean = try {
-        val keyBytes = Base64.decode(spkiBase64, Base64.NO_WRAP)
+        val keyBytes = Base64.getDecoder().decode(spkiBase64)
         val spec = java.security.spec.X509EncodedKeySpec(keyBytes)
         val key = java.security.KeyFactory.getInstance("EC").generatePublic(spec)
         Signature.getInstance(SIGNATURE_ALGORITHM).run {
             initVerify(key)
             update(payload.toByteArray(Charsets.UTF_8))
-            verify(Base64.decode(sigBase64, Base64.NO_WRAP))
+            verify(Base64.getDecoder().decode(sigBase64))
         }
     } catch (_: Exception) {
         false

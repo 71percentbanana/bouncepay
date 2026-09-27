@@ -5,7 +5,7 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, createSign, randomUUID, randomBytes } from 'node:crypto';
+import { generateKeyPairSync, createSign, createVerify, randomUUID, randomBytes } from 'node:crypto';
 
 import { createBank } from '../src/server.js';
 import { fingerprint } from '../src/ledger.js';
@@ -70,9 +70,16 @@ test('enrol, pay across two relays, and see it everywhere', async () => {
   const packet = signed(phone, 250_00, [phone.id, 'bp_relay000000001', 'bp_bridge00000001']);
   const res = await post('/v1/settle', packet);
   assert.equal(res.status, 200);
-  const { status, receipt } = await res.json();
+  const { status, receipt, proof } = await res.json();
   assert.equal(status, 'SETTLED');
   assert.equal(receipt.payerBalancePaise, 750_00);
+
+  // The proof is signed by the key the bank advertised at enrolment.
+  const v = createVerify('SHA256');
+  v.update(proof.payload);
+  assert.ok(v.verify({ key: Buffer.from(enrolled.bankPubKey, 'base64'), format: 'der', type: 'spki' },
+    Buffer.from(proof.sig, 'base64')), 'receipt proof verifies with the enrolment key');
+  assert.equal(JSON.parse(proof.payload).txId, receipt.txId);
 
   // The same packet via another route is answered, not re-applied.
   const dup = await (await post('/v1/settle', packet)).json();
