@@ -96,9 +96,11 @@ commit them.
 | --- | --- |
 | Signing: ECDSA P-256 in Android Keystore, payer bound to key | Built; the signed wire format is verified byte-for-byte between Kotlin (JVM) and Node |
 | Settlement: signature, key binding, freshness, limits, replay, idempotent duplicates | Built and tested (24 bank tests) |
+| CI | Every push builds the APK and runs both suites on GitHub Actions; the APK is kept as a build artifact |
 | Store-and-forward queue that survives restarts | Built |
 | Bank-signed receipts passed back through the mesh to an offline payer | Built; verified across Node and Kotlin with a shared fixture |
-| BLE mesh: advertise, scan, GATT transfer with chunking, loop avoidance | Built and compiles against API 36; **not yet tried on physical phones** |
+| Mesh routing: forwarding, loop avoidance, dedup, receipt gossip | Built; simulated across chains, diamonds and a 4×4 grid of phones in unit tests |
+| BLE transport: advertise, scan, GATT transfer with chunking | Built and compiles against API 36; **not yet tried on physical phones** |
 | Routing model, end to end, in the browser | The interactive prototype on the site |
 
 The site's *Built with* section still labels these layers as planned; update

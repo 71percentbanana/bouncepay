@@ -28,9 +28,9 @@ import java.io.File
  * schema migrations, and the whole thing is inspectable with `adb shell cat`
  * during a demo. The interface is narrow enough to swap for Room later.
  */
-class PacketStore(context: Context) {
+class PacketStore(private val file: File) {
 
-    private val file = File(context.filesDir, "packet-queue.json")
+    constructor(context: Context) : this(File(context.filesDir, "packet-queue.json"))
     private val lock = Any()
 
     private val _packets = MutableStateFlow<List<StoredPacket>>(emptyList())

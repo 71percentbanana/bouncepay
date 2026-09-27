@@ -72,7 +72,8 @@ Pay  ─►  Packet.create  ─►  PacketStore  ─►  MeshNode loop (every 6 
 | `ble/MeshPeripheral.kt` | GATT server + advertiser: receives packets |
 | `ble/MeshCentral.kt` | Scanner + GATT client: sends packets, one awaited operation at a time |
 | `bank/Bank.kt` | `RemoteBank` (the mock bank over HTTP) and `EmbeddedBank` (same rules, on-device) |
-| `mesh/MeshNode.kt` | The loop: decides bridge or relay every cycle, settles or forwards |
+| `mesh/MeshNode.kt` | The loop: owns the radio and network, decides bridge or relay every cycle |
+| `mesh/MeshRouter.kt` | Every routing decision — what to accept, settle, forward, and believe — with no Android dependency |
 | `mesh/ReceiptBook.kt` | Which bank receipts to pass on, and to whom they have been sent |
 | `model/Receipt.kt` | A bank-signed receipt and its BLE batch encoding |
 | `mesh/MeshService.kt` | Foreground service so relaying continues with the screen off |
@@ -123,6 +124,27 @@ so its settlements are not passed back.
 - **₹2,000 ceiling** per packet, mirrored by the bank.
 - **Scan throttle**: Android silently ignores apps that start more than five
   scans in 30 s, so scans are spaced at least 6.5 s apart.
+
+## Testing the mesh without phones
+
+`MeshSimulationTest` wires several real `MeshRouter`s, each over its own
+on-disk queue, into a topology and runs pump cycles, replacing only Bluetooth.
+Keys are real P-256 and the fake bank verifies and signs like the mock bank.
+It checks that:
+
+- a payment crosses two relays, settles once, and the offline payer receives
+  the bank's receipt;
+- copies that reach two bridges move the money once;
+- two phones out of reach of any bridge pass a packet once, not back and forth;
+- a relay cannot forge a receipt, and a relay that never met the bank carries
+  receipts without acting on them;
+- a refused payment returns to the payer's wallet, and nothing is lost while
+  the bank is down;
+- on a 4×4 grid the payment gets from one corner to a bridge in the other,
+  with each phone passing it to each neighbour at most once.
+
+Disabling the loop check or the receipt verification in `MeshRouter` makes
+these tests fail — they were checked that way.
 
 ## Status
 

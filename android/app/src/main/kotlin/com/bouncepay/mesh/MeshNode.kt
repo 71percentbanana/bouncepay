@@ -91,6 +91,14 @@ class MeshNode(
 
     private val receipts = ReceiptBook()
 
+    private val router = MeshRouter(
+        selfId = deviceId,
+        store = store,
+        receipts = receipts,
+        bankKey = { prefs.current.bankPubKey },
+        refund = ::refund,
+    )
+
     /**
      * BLE address → account id, learned from every connection.
      *
@@ -200,48 +208,23 @@ class MeshNode(
         // A relay accepts blind. It has no way to judge the payment, so its only
         // job is to keep it safe and keep it moving. Verification belongs to
         // the bank.
-        val isNew = store.offer(packet.withHop(deviceId))
+        val isNew = router.onPacket(packet)
         _status.update {
             it.copy(activity = if (isNew) "Carrying ${packet.fields.rupees} for someone" else "Already had that packet")
         }
         if (isNew) poke()
     }
 
-    /**
-     * Receipts coming back from the bank's side of the mesh.
-     *
-     * Checked against the pinned bank key before anything is believed: a
-     * relay could otherwise tell a payer its payment went through when it
-     * never left the relay's pocket. A phone that has never met the bank
-     * cannot check, so it carries receipts on without acting on them.
-     */
+    /** Receipts from a peer; the router decides what to believe. */
     private fun onReceiptsReceived(incoming: List<SignedReceipt>, from: String) {
-        val bankKey = prefs.current.bankPubKey
-        var settledHere = 0
-        var news = false
-        for (receipt in incoming) {
-            val verified = bankKey != null && receipt.verifiedBy(bankKey)
-            if (bankKey != null && !verified) {
-                Log.w(TAG, "dropped a receipt from $from that the bank did not sign")
-                continue
-            }
-            if (receipts.add(receipt)) news = true
-            if (verified && applyReceipt(receipt, "settled · bank receipt came back over the mesh")) settledHere++
-        }
-        if (settledHere > 0) {
-            _status.update { it.copy(activity = "Bank receipt arrived · $settledHere payment(s) settled") }
+        val intake = router.onReceipts(incoming)
+        if (intake.dropped > 0) Log.w(TAG, "dropped ${intake.dropped} receipt(s) from $from the bank did not sign")
+        if (intake.settledHere > 0) {
+            _status.update { it.copy(activity = "Bank receipt arrived · ${intake.settledHere} payment(s) settled") }
         }
         // Only news is worth a cycle; two phones swapping what both already
         // have must not keep waking each other.
-        if (news) poke()
-    }
-
-    /** Marks a held packet settled by [receipt]. True if that changed anything. */
-    private fun applyReceipt(receipt: SignedReceipt, note: String): Boolean {
-        val held = store.find(receipt.txId) ?: return false
-        if (held.state == PacketState.SETTLED && held.receipt != null) return false
-        store.markSettled(receipt.txId, note, receipt)
-        return true
+        if (intake.news) poke()
     }
 
     /**
@@ -289,13 +272,10 @@ class MeshNode(
         }
         _status.update { it.copy(role = role) }
 
-        if (bank != null) {
-            val pending = store.pending().map { it.packet }
-            if (pending.isNotEmpty()) settleAll(pending, bank)
-        }
+        if (bank != null && store.pending().isNotEmpty()) settleAll(bank)
 
         // Whatever is still unsettled, and every fresh receipt, goes to peers.
-        val toForward = if (bank == null) store.pending().map { it.packet } else emptyList()
+        val toForward = router.toForward(isBridge = bank != null)
         val toShare = receipts.fresh()
         _status.update { it.copy(receiptsToShare = toShare.size) }
 
@@ -326,39 +306,15 @@ class MeshNode(
     }
 
     /** This device is the bridge: push everything it is carrying to the bank. */
-    private suspend fun settleAll(packets: List<Packet>, bank: Bank) {
-        _status.update { it.copy(activity = "Bridging ${packets.size} packet(s) · ${bank.label}") }
-
-        for (packet in packets) {
-            val fields = packet.fields
-            when (val result = bank.settle(packet)) {
-                is Settlement.Settled -> {
-                    val transfers = (packet.hops.size - 1).coerceAtLeast(0)
-                    store.markSettled(
-                        packet.txId,
-                        if (result.duplicate) "already settled"
-                        else "settled by ${result.source} · $transfers hop(s)",
-                        result.proof,
-                    )
-                    // Send the proof back the way the packet came, so the
-                    // payer — still offline — finds out.
-                    result.proof?.let { receipts.add(it) }
-                    _status.update { it.copy(activity = "Settled ${fields.rupees} via ${result.source}") }
-                }
-                is Settlement.Rejected -> {
-                    // A refusal is final: carrying it further cannot help.
-                    store.markRejected(packet.txId, "${result.code}: ${result.message}")
-                    // No money moved, so this phone's own spend comes back.
-                    if (fields.payerId == deviceId) refund(fields.amountPaise)
-                    _status.update { it.copy(activity = "Refused: ${result.code}") }
-                }
-                is Settlement.Unreachable -> {
-                    // Keep it — the bank vanishing is not the packet's fault —
-                    // and stop hammering it for the rest of this cycle.
-                    _status.update { it.copy(activity = "Bank stopped answering · holding") }
-                    return
-                }
+    private suspend fun settleAll(bank: Bank) {
+        _status.update { it.copy(activity = "Bridging ${store.pending().size} packet(s) · ${bank.label}") }
+        router.settleAll(bank) { packet, result ->
+            val activity = when (result) {
+                is Settlement.Settled -> "Settled ${packet.fields.rupees} via ${result.source}"
+                is Settlement.Rejected -> "Refused: ${result.code}"
+                is Settlement.Unreachable -> "Bank stopped answering · holding"
             }
+            _status.update { it.copy(activity = activity) }
         }
     }
 
@@ -392,18 +348,7 @@ class MeshNode(
             return
         }
 
-        fun needs(peerId: String?): Outgoing {
-            val forPeer = packets.mapNotNull { original ->
-                // Re-read: a hand-off or a receipt earlier this pass may have
-                // changed it.
-                val current = store.find(original.txId)
-                    ?.takeIf { it.state == PacketState.HELD || it.state == PacketState.FORWARDED }
-                    ?.packet
-                current?.takeIf { peerId == null || peerId !in it.hops }
-            }
-            val receiptsForPeer = toShare.filter { peerId == null || !receipts.wasSentTo(it.txId, peerId) }
-            return Outgoing(forPeer, receiptsForPeer)
-        }
+        fun needs(peerId: String?): Outgoing = router.needs(peerId, packets, toShare)
 
         var packetsHanded = 0
         var receiptsHanded = 0
@@ -416,8 +361,7 @@ class MeshNode(
             val peerId = result.peerId
             if (peerId != null) knownPeers[peer.address] = peerId
 
-            for (txId in result.packetsSent) store.recordHandoff(txId, peerId ?: peer.address)
-            if (peerId != null) result.receiptsSent.forEach { receipts.markSent(it, peerId) }
+            router.record(result, peer.address)
             packetsHanded += result.packetsSent.size
             receiptsHanded += result.receiptsSent.size
 
