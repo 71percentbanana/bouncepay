@@ -1,27 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BouncePay — Offline-First Material You Payment Network</title>
-  <meta name="description"
-    content="BouncePay keeps digital payments functioning during Internet outages using Bluetooth Low Energy (BLE) store-and-forward mesh routing." />
+  <meta name="description" content="BouncePay keeps digital payments functioning during Internet outages using Bluetooth Low Energy (BLE) store-and-forward mesh routing." />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
 
   <!-- Google Fonts: Roboto (Material Design 3 Canonical Typeface) & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Roboto:wght@400;500;700&display=swap"
-    rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
 
   <!-- Stylesheets -->
   <script type="module" crossorigin src="./assets/index-EEqA8Ngc.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-C26Vj9Rx.css">
   <link rel="stylesheet" href="./theme-dark.css" />
 </head>
-
 <body>
   <!-- Atmospheric Material You Layer: Organic Layered Blur Shapes -->
   <div class="md-ambient-layer" aria-hidden="true">
@@ -31,7 +26,7 @@
   </div>
 
   <div class="bp-app">
-
+    
     <header class="bp-header">
       <!-- Prominent Brand Title Card (Wider, Higher Authority, Clear Resilience Messaging) -->
       <div class="bp-brand-card">
@@ -41,8 +36,7 @@
           <span class="bp-badge-context">FAILOVER ON INTERNET OUTAGES</span>
         </div>
         <div class="bp-brand-subtitle">
-          Payment resilience during network failure: Authenticates offline transactions over BLE & routes via
-          store-and-forward mesh until internet settlement.
+          Payment resilience during network failure: Authenticates offline transactions over BLE & routes via store-and-forward mesh until internet settlement.
         </div>
       </div>
 
@@ -56,12 +50,10 @@
 
         <!-- Demo Mode Navigation Toggle (Pill Buttons) -->
         <div class="bp-header-actions">
-          <button id="btnHeroDemo" class="btn-hero-demo active" title="Run store-and-forward mesh sequence"
-            type="button">
+          <button id="btnHeroDemo" class="btn-hero-demo active" title="Run store-and-forward mesh sequence" type="button">
             <span class="btn-text-content">STORE & FORWARD</span>
           </button>
-          <button id="btnDirectDemo" class="btn-hero-demo btn-direct-nav"
-            title="Demonstrate direct point-to-point BLE payment" type="button">
+          <button id="btnDirectDemo" class="btn-hero-demo btn-direct-nav" title="Demonstrate direct point-to-point BLE payment" type="button">
             <span class="btn-text-content">DIRECT BLE</span>
           </button>
           <button id="btnReset" class="btn-icon-minimal" title="Reset Prototype" type="button">
@@ -73,7 +65,7 @@
 
     <!-- Main Presentation 3-Column Layout -->
     <main class="bp-grid">
-
+      
       <!-- =================================================================
            LEFT COLUMN: iQOO PHONE (Customer Payment Device)
            ================================================================= -->
@@ -115,12 +107,11 @@
                   <button class="p-chip active" data-amt="500" type="button">₹500</button>
                   <button class="p-chip" data-amt="1000" type="button">₹1,000</button>
                 </div>
-
+                
                 <div class="phone-offline-balance-row">
                   <span class="phone-balance-label">Offline Balance</span>
                   <span class="phone-balance-val" id="phoneBalanceVal">₹2,000</span>
-                  <button id="btnTopupQuota" class="btn-topup-quota" style="display: none;" type="button">+ Reload
-                    ₹2,000 Quota</button>
+                  <button id="btnTopupQuota" class="btn-topup-quota" style="display: none;" type="button">+ Reload ₹2,000 Quota</button>
                 </div>
 
                 <!-- Funds Warning Box -->
@@ -183,7 +174,7 @@
       <section class="col-network" aria-label="Payment Route and BLE Connection">
         <div class="network-header-row">
           <h2 class="network-title" id="centerPanelTitle">STORE & FORWARD MESH ROUTING</h2>
-
+          
           <div id="networkBadge" class="network-status-badge offline">
             <span class="pulse-indicator offline" id="netPulseDot"></span>
             <span id="netBadgeText">INTERNET OFFLINE</span>
@@ -278,7 +269,7 @@
           <div class="direct-connection-rail">
             <div class="direct-rail-line"></div>
             <div class="direct-rail-active" id="directRailActive"></div>
-
+            
             <div class="direct-ble-pill">
               <span class="ble-pulse-dot"></span>
               <span>Bluetooth Direct Channel</span>
@@ -433,7 +424,7 @@
 
           <!-- Direct BLE Sync Button (Pill CTA) -->
           <button id="btnSyncOnline" class="btn-sync-cta" style="display: none;" type="button">
-            <span>🌐 SYNC WHEN ONLINE</span>
+            <span>SYNC WHEN ONLINE</span>
           </button>
 
           <!-- Accept Next Payment Button & Ledger Summary Pill -->
@@ -472,6 +463,7 @@
           </div>
         </div>
       </section>
+
     </main>
   </div>
 
@@ -493,5 +485,4 @@
     })();
   </script>
 </body>
-
 </html>

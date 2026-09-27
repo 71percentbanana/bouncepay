@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "build:demo": "node scripts/build-demo.mjs"
+    "build:demo": "node scripts/build-demo.mjs",
+    "build:deck": "python scripts/generate_deck.py"
   },
   "dependencies": {
     "clsx": "^2.1.1",

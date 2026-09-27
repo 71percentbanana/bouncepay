@@ -36,18 +36,88 @@ execSync(
 copyFileSync(themeSrc, resolve(outDir, THEME_FILE));
 console.log(`• Copied ${THEME_FILE}`);
 
-// The terminal's device id repeats across the merchant panel and adds nothing
-// at a glance, so it is stripped from the markup and from the strings the app
-// builds at runtime. Done post-build so a rebuild cannot reintroduce it.
-const NOISE = [' (POS #BP-01)', ' • POS #BP-01'];
-const stripNoise = (file) => {
+/* ---------------------------------------------------------------------------
+   Post-build polish.
+
+   Everything below was once applied by hand to the build output, which meant
+   the next `npm run build:demo` silently undid it. It is encoded here so the
+   embedded demo is reproducible from the prototype source.
+   --------------------------------------------------------------------------- */
+
+// The terminal's device id repeats across the merchant panel, and the handset
+// model is a sponsor detail the page does not need to name.
+const PHRASES = [
+  [' (POS #BP-01)', ''],
+  [' • POS #BP-01', ''],
+  ['iQOO 12 PRO', 'iQOO PHONE'],   // markup
+  ['iQOO 12 Pro', 'iQOO Phone'],   // strings the app builds at runtime
+];
+const replacePhrases = (file) => {
   let text = readFileSync(file, 'utf8');
   let hits = 0;
-  for (const phrase of NOISE) {
-    while (text.includes(phrase)) { text = text.replace(phrase, ''); hits++; }
+  for (const [from, to] of PHRASES) {
+    while (text.includes(from)) { text = text.replace(from, to); hits++; }
   }
   if (hits) { writeFileSync(file, text, 'utf8'); }
   return hits;
+};
+
+// Colour emoji look like clip art next to the site's typography, so the route
+// nodes become numerals and the status glyphs become typographic marks.
+const GLYPHS = [
+  ['<span>⚠️</span>', '<span style="font-weight: 700;">!</span>'],
+  ['<span class="ble-signal-waves">📡</span>', '<span class="ble-signal-waves">●</span>'],
+  ['<span class="dtc-lock">🔒</span>', '<span class="dtc-lock">SECURE</span>'],
+  ['<span>🌐 SYNC WHEN ONLINE</span>', '<span>SYNC WHEN ONLINE</span>'],
+];
+
+// The prototype's own step ticker duplicates the routing column's step bar.
+const TICKER_FROM =
+  '<!-- Step-by-Step State Progress Indicator (Pill Card) -->\n        <div class="step-ticker-card">';
+const TICKER_TO =
+  '<!-- Step-by-Step State Progress Indicator (Hidden) -->\n        <div class="step-ticker-card" style="display: none !important;">';
+
+// Lets the travelling packet land in the backend node rather than stopping
+// short of it; pairs with .settled-absorbed in demo-theme.css.
+const ABSORB_SCRIPT = `  <script>
+    // Seamless packet absorption into Backend on Step 7 (Settlement)
+    (function() {
+      const backendNode = document.getElementById('nodeBackend');
+      const packet = document.getElementById('travelingPacket');
+      if (!backendNode || !packet) return;
+
+      const observer = new MutationObserver(function() {
+        if (backendNode.classList.contains('completed')) {
+          packet.classList.add('settled-absorbed');
+        } else {
+          packet.classList.remove('settled-absorbed');
+        }
+      });
+      observer.observe(backendNode, { attributes: true, attributeFilter: ['class'] });
+    })();
+  </script>
+`;
+
+const polishMarkup = (file) => {
+  let text = readFileSync(file, 'utf8');
+
+  // number the route nodes and the direct-BLE device cards in document order
+  let node = 0;
+  text = text.replace(/<div class="node-circle-bubble">[^<]*<\/div>/g,
+    () => `<div class="node-circle-bubble">${++node}</div>`);
+  let card = 0;
+  text = text.replace(/<div class="ddc-icon">[^<]*<\/div>/g,
+    () => `<div class="ddc-icon">${++card}</div>`);
+
+  for (const [from, to] of GLYPHS) text = text.replace(from, to);
+  text = text.replace(TICKER_FROM, TICKER_TO);
+
+  if (!text.includes('settled-absorbed')) {
+    text = text.replace('</body>', `${ABSORB_SCRIPT}</body>`);
+  }
+
+  writeFileSync(file, text, 'utf8');
+  return { node, card };
 };
 
 const indexPath = resolve(outDir, 'index.html');
@@ -55,8 +125,11 @@ const assetsDir = resolve(outDir, 'assets');
 const jsFiles = existsSync(assetsDir)
   ? readdirSync(assetsDir).filter(f => f.endsWith('.js')).map(f => resolve(assetsDir, f))
   : [];
-const stripped = [indexPath, ...jsFiles].reduce((n, f) => n + stripNoise(f), 0);
-console.log(`• Stripped ${stripped} device-id reference(s)`);
+const replaced = [indexPath, ...jsFiles].reduce((n, f) => n + replacePhrases(f), 0);
+console.log(`• Rewrote ${replaced} device/branding reference(s)`);
+
+const { node, card } = polishMarkup(indexPath);
+console.log(`• Numbered ${node} route nodes and ${card} device cards, hid the step ticker`);
 
 let html = readFileSync(indexPath, 'utf8');
 

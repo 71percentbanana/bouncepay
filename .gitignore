@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated pitch decks — rebuild with `npm run build:deck`
+*.pptx
