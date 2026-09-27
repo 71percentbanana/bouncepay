@@ -1,0 +1,14 @@
+# Gradle and build output
+.gradle/
+.kotlin/
+build/
+captures/
+*.apk
+*.aab
+
+# Machine-specific: points at the local Android SDK
+local.properties
+
+# IDE
+*.iml
+.idea/

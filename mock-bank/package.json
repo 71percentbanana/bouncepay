@@ -1,0 +1,11 @@
+{
+  "name": "bouncepay-mock-bank",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Settlement service for BouncePay: verifies offline-signed payment packets, rejects replays, keeps the ledger.",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test \"test/*.test.js\""
+  }
+}

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BouncePay Mock Bank</title>
+<!--
+  Live view of the mock bank for the demo. Self-contained on purpose: the
+  laptop running this may be on a hotspot with no internet, so no fonts or
+  scripts are fetched from anywhere.
+-->
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#141218; --s1:#1d1b20; --s2:#211f26; --s3:#2b2930;
+  --on:#e6e0e9; --muted:#cac4d0; --faint:#938f99; --line:#36343b;
+  --primary:#d0bcff; --violet:#a89bff; --teal:#2ff0c8;
+  --green:#7edb8f; --gold:#f5c542; --red:#f2b8b5;
+  --mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--on);font:14px/1.5 var(--sans);min-height:100vh;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 16px 48px}
+
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:24px}
+.brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:600;letter-spacing:-.01em}
+.brand small{font-weight:400;color:var(--faint);font-size:14px}
+.live{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);
+  background:var(--s2);border-radius:999px;padding:6px 12px}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.live.on i{background:var(--green);box-shadow:0 0 0 0 rgba(126,219,143,.6);animation:pulse 2s infinite}
+.live.off i{background:var(--red)}
+@keyframes pulse{70%{box-shadow:0 0 0 8px rgba(126,219,143,0)}100%{box-shadow:0 0 0 0 rgba(126,219,143,0)}}
+
+.connect{background:var(--s1);border-radius:20px;padding:14px 18px;margin-bottom:20px;
+  display:flex;gap:10px 16px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:13px}
+.connect code{font:13px var(--mono);color:var(--teal);background:var(--s3);padding:3px 8px;border-radius:8px}
+
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat{background:var(--s1);border-radius:20px;padding:16px 18px}
+.stat b{display:block;font-size:26px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+
+.grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;align-items:start}
+.card{background:var(--s1);border-radius:24px;padding:20px}
+.card h2{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}
+.side{display:grid;gap:16px}
+.empty{color:var(--faint);font-size:13px;padding:8px 0}
+
+.tx{display:grid;grid-template-columns:auto 1fr auto;gap:4px 14px;align-items:center;
+  padding:14px;border-radius:16px;background:var(--s2);margin-bottom:8px}
+.tx.new{animation:arrive 1.6s ease-out}
+@keyframes arrive{0%{background:rgba(47,240,200,.22);transform:translateY(-4px)}100%{background:var(--s2);transform:none}}
+.tx .amt{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.tx .who{color:var(--muted);font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tx .when{color:var(--faint);font-size:12px;text-align:right}
+.trail{grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:4px;font:11px var(--mono);color:var(--faint)}
+.trail .node{display:inline-flex;align-items:center;gap:5px;background:var(--s3);padding:2px 8px;border-radius:999px}
+.trail .node i{width:6px;height:6px;border-radius:50%;background:var(--gold)}
+.trail .node.payer i{background:var(--violet)}
+.trail .node.bridge i{background:var(--green)}
+.trail .arrow{opacity:.5}
+.pill{font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(126,219,143,.14);color:var(--green)}
+
+.acct{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.acct:last-child{border-bottom:0}
+.acct .name{min-width:0}
+.acct .name b{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct .name code{font:11px var(--mono);color:var(--faint)}
+.acct .bal{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.acct .bal.up{color:var(--green)}
+
+.rej{padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+.rej:last-child{border-bottom:0}
+.rej b{color:var(--red);font:600 12px var(--mono)}
+.rej p{color:var(--muted);margin-top:2px}
+.rej code{font:11px var(--mono);color:var(--faint)}
+
+@media (max-width:860px){
+  .grid{grid-template-columns:1fr}
+  .stats{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="24" y2="24">
+          <stop offset="0" stop-color="#a89bff"/><stop offset="1" stop-color="#2ff0c8"/>
+        </linearGradient></defs>
+        <path d="M12 3.4 5.2 8.2v7.6L12 20.6l6.8-4.8V8.2Z" stroke="url(#lg)" stroke-width="1.3"
+              stroke-linejoin="round" fill="rgba(139,124,255,.10)"/>
+        <path d="M5.2 8.2 12 12l6.8-3.8M12 12v8.6" stroke="url(#lg)" stroke-width="1.1" opacity=".75"/>
+        <circle cx="12" cy="12" r="2.1" fill="#2ff0c8"/>
+      </svg>
+      BouncePay <small>Mock bank</small>
+    </div>
+    <div class="live" id="live"><i></i><span>Connecting…</span></div>
+  </header>
+
+  <div class="connect" id="connect" hidden>
+    <span>On each phone, open Settings and set the bank URL to</span>
+    <span id="urls"></span>
+  </div>
+
+  <section class="stats">
+    <div class="stat"><b id="s-count">0</b><span>Settled</span></div>
+    <div class="stat"><b id="s-total">₹0</b><span>Volume</span></div>
+    <div class="stat"><b id="s-accounts">0</b><span>Accounts</span></div>
+    <div class="stat"><b id="s-rejected">0</b><span>Refused</span></div>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Settlements</h2>
+      <div id="feed"><p class="empty">Nothing yet. Pay from a phone that is offline and watch it arrive here.</p></div>
+    </section>
+    <div class="side">
+      <section class="card">
+        <h2>Accounts</h2>
+        <div id="accounts"></div>
+      </section>
+      <section class="card">
+        <h2>Refused</h2>
+        <div id="rejections"><p class="empty">None. Tampered, replayed or unfunded packets would show here.</p></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const rupees = (p) => '₹' + (p / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const short = (id) => (id && id.startsWith('bp_')) ? '…' + id.slice(-6) : id;
+
+function ago(ms) {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+const seen = new Set();
+let firstRender = true;
+let lastBalances = new Map();
+
+function trail(hops) {
+  return hops.map((h, i) => {
+    const cls = i === 0 ? 'payer' : i === hops.length - 1 ? 'bridge' : '';
+    const role = i === 0 ? 'payer' : i === hops.length - 1 ? 'bridge' : 'relay';
+    return `<span class="node ${cls}" title="${esc(h)} (${role})"><i></i>${esc(short(h))}</span>`;
+  }).join('<span class="arrow">→</span>');
+}
+
+function render(ledger) {
+  const names = new Map(ledger.accounts.map((a) => [a.id, a.label]));
+  const label = (id) => names.get(id) && names.get(id) !== id ? names.get(id) : short(id);
+
+  $('s-count').textContent = ledger.settledCount;
+  $('s-total').textContent = rupees(ledger.totalSettledPaise);
+  $('s-accounts').textContent = ledger.accounts.length;
+  $('s-rejected').textContent = ledger.rejectedCount ?? ledger.recentRejections.length;
+
+  const feed = ledger.recentSettlements;
+  if (feed.length) {
+    $('feed').innerHTML = feed.map((r) => {
+      const fresh = !firstRender && !seen.has(r.txId);
+      const hops = r.hops?.length ? r.hops : [r.payerId];
+      const transfers = Math.max(hops.length - 1, 0);
+      return `<div class="tx${fresh ? ' new' : ''}">
+        <span class="amt">${rupees(r.amountPaise)}</span>
+        <span class="who">${esc(label(r.payerId))} → ${esc(label(r.payeeId))}</span>
+        <span class="when">${ago(r.settledAt)}</span>
+        <div class="trail">${trail(hops)}<span class="pill" style="margin-left:6px">${transfers} hop${transfers === 1 ? '' : 's'}</span></div>
+      </div>`;
+    }).join('');
+    feed.forEach((r) => seen.add(r.txId));
+  }
+
+  $('accounts').innerHTML = ledger.accounts
+    .slice()
+    .sort((a, b) => (a.id === 'campus-stationery' ? -1 : b.id === 'campus-stationery' ? 1 : 0))
+    .map((a) => {
+      const before = lastBalances.get(a.id);
+      const up = before !== undefined && a.balancePaise > before;
+      return `<div class="acct">
+        <div class="name"><b>${esc(a.label)}</b><code>${esc(a.id)}</code></div>
+        <div class="bal${up ? ' up' : ''}">${rupees(a.balancePaise)}</div>
+      </div>`;
+    }).join('') || '<p class="empty">No accounts.</p>';
+  lastBalances = new Map(ledger.accounts.map((a) => [a.id, a.balancePaise]));
+
+  if (ledger.recentRejections.length) {
+    $('rejections').innerHTML = ledger.recentRejections.map((r) => `
+      <div class="rej"><b>${esc(r.code)}</b> <code>${esc(r.txId === '-' ? '' : r.txId.slice(0, 8))}</code>
+        <p>${esc(r.reason)}</p></div>`).join('');
+  }
+
+  firstRender = false;
+}
+
+function setLive(ok) {
+  $('live').className = 'live ' + (ok ? 'on' : 'off');
+  $('live').querySelector('span').textContent = ok ? 'Live' : 'Bank not responding';
+}
+
+async function tick() {
+  try {
+    const res = await fetch('/v1/ledger', { cache: 'no-store' });
+    render(await res.json());
+    setLive(true);
+  } catch {
+    setLive(false);
+  }
+}
+
+fetch('/v1/health').then((r) => r.json()).then((h) => {
+  if (h.lan?.length) {
+    $('urls').innerHTML = h.lan.map((u) => `<code>${esc(u)}</code>`).join(' or ');
+    $('connect').hidden = false;
+  }
+}).catch(() => {});
+
+tick();
+setInterval(tick, 1500);
+</script>
+</body>
+</html>

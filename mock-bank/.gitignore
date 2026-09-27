@@ -1,0 +1,3 @@
+# Written when BANK_SNAPSHOT is set; demo state, not source
+*.snapshot.json
+bank-snapshot.json

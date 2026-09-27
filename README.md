@@ -13,11 +13,11 @@ Built for iQOO City Battles 2026 · Track 01: Fintech & Commerce.
 
 ## What's in here
 
-This repo is the **marketing site**, which embeds the interactive prototype.
-
 | Path | What it is |
 | --- | --- |
-| `index.html` | The whole site — hand-written HTML/CSS/JS, no framework |
+| [`android/`](android/) | The Android app — real BLE mesh, Keystore signing, store-and-forward |
+| [`mock-bank/`](mock-bank/) | The settlement service the bridge phone posts to, with a live dashboard |
+| `index.html` | The marketing site — hand-written HTML/CSS/JS, no framework |
 | `public/demo/` | Build output of the prototype, served at `/demo/` |
 | `scripts/build-demo.mjs` | Builds the prototype and applies the site's theme |
 | `scripts/demo-theme.css` | Dark Material You overlay for the prototype |
@@ -28,7 +28,23 @@ This repo is the **marketing site**, which embeds the interactive prototype.
 The site is a single self-contained HTML file. Vite is used only to serve and
 copy `public/` — there is no bundling step for the page itself.
 
-## Running it
+## The app and the bank
+
+```bash
+cd mock-bank && npm start                 # settlement service + dashboard on :4000
+cd android && ./gradlew assembleDebug     # APK for the phones
+```
+
+[`android/README.md`](android/README.md) walks through a three-phone demo:
+payer and relay forced offline, a bridge on the laptop's Wi-Fi, and the
+payment appearing on the bank's dashboard with the route it took.
+
+The two halves are written in different languages but must agree on every
+byte that is signed. `./gradlew testDebugUnitTest` signs a packet exactly as
+the phone does and writes it out; `npm test` in `mock-bank/` then verifies
+that same file with Node's independent crypto.
+
+## Running the site
 
 ```bash
 npm install
@@ -76,13 +92,16 @@ commit them.
 
 ## What actually works
 
-The prototype demonstrates the **routing model** end to end: store-and-forward,
-opportunistic relay selection, and the full seven-step settlement sequence.
+| | Status |
+| --- | --- |
+| Signing: ECDSA P-256 in Android Keystore, payer bound to key | Built; the signed wire format is verified byte-for-byte between Kotlin (JVM) and Node |
+| Settlement: signature, key binding, freshness, limits, replay, idempotent duplicates | Built and tested (21 tests) |
+| Store-and-forward queue that survives restarts | Built |
+| BLE mesh: advertise, scan, GATT transfer with chunking, loop avoidance | Built and compiles against API 36; **not yet tried on physical phones** |
+| Routing model, end to end, in the browser | The interactive prototype on the site |
 
-The radio, the cryptography and the backend are **designed but not built** —
-BLE, signatures, replay protection and the settlement API are specified in the
-site's *Built with* section and labelled as planned. Nothing on the site claims
-them as implemented.
+The site's *Built with* section still labels these layers as planned; update
+it once the BLE path has been run on real handsets.
 
 ## Team
 
