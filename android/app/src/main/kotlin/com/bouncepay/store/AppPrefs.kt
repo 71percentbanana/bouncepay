@@ -43,6 +43,9 @@ data class Settings(
      * verify against it.
      */
     val bankPubKey: String? = null,
+
+    /** How this phone appears to others nearby. Blank means the model name. */
+    val displayName: String = "",
 )
 
 /** Persisted settings, observable so the UI updates when they change. */
@@ -62,6 +65,7 @@ class AppPrefs(context: Context) {
         enrolled = prefs.getBoolean(KEY_ENROLLED, false),
         walletPaise = prefs.getInt(KEY_WALLET, 0),
         bankPubKey = prefs.getString(KEY_BANK_KEY, null),
+        displayName = prefs.getString(KEY_NAME, null).orEmpty(),
     )
 
     fun update(transform: (Settings) -> Settings) = synchronized(this) {
@@ -73,6 +77,7 @@ class AppPrefs(context: Context) {
             putBoolean(KEY_ENROLLED, next.enrolled)
             putInt(KEY_WALLET, next.walletPaise)
             putString(KEY_BANK_KEY, next.bankPubKey)
+            putString(KEY_NAME, next.displayName.trim().take(MAX_NAME))
         }
         _settings.value = next
     }
@@ -94,5 +99,7 @@ class AppPrefs(context: Context) {
         const val KEY_ENROLLED = "enrolled"
         const val KEY_WALLET = "walletPaise"
         const val KEY_BANK_KEY = "bankPubKey"
+        const val KEY_NAME = "displayName"
+        const val MAX_NAME = 24
     }
 }

@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -79,6 +81,8 @@ import androidx.core.content.ContextCompat
 import com.bouncepay.mesh.MeshNode
 import com.bouncepay.mesh.MeshService
 import com.bouncepay.mesh.MeshStatus
+import com.bouncepay.mesh.NearbyPhone
+import com.bouncepay.model.SignedReceipt
 import com.bouncepay.mesh.Role
 import com.bouncepay.model.PacketState
 import com.bouncepay.model.StoredPacket
@@ -89,8 +93,14 @@ import com.bouncepay.ui.SettledGreen
 import kotlinx.coroutines.launch
 
 /** The merchant every demo payment goes to; the mock bank opens it on start. */
-private const val PAYEE_ID = "campus-stationery"
-private const val PAYEE_NAME = "Campus Stationery"
+/** The merchant the mock bank opens on start; always offered as a payee. */
+private val MERCHANT = NearbyPhone("campus-stationery", "Campus Stationery")
+
+private fun payeeLabel(id: String?): String = when {
+    id == null -> "?"
+    id == MERCHANT.id -> MERCHANT.name
+    else -> "…" + id.takeLast(6)
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -148,6 +158,10 @@ private fun MeshScreen(mesh: MeshNode) {
     val status by mesh.status.collectAsState()
     val packets by mesh.store.packets.collectAsState()
     val settings by mesh.prefs.settings.collectAsState()
+    val nearby by mesh.nearby.collectAsState()
+    val received by mesh.incoming.received.collectAsState()
+    var payee by remember { mutableStateOf(MERCHANT) }
+    var finding by remember { mutableStateOf(false) }
 
     var amountPaise by remember { mutableIntStateOf(100_00) }
     var granted by remember { mutableStateOf(context.hasBlePermissions()) }
@@ -249,13 +263,33 @@ private fun MeshScreen(mesh: MeshNode) {
                     amountPaise = amountPaise,
                     walletPaise = settings.walletPaise,
                     enabled = granted,
+                    payee = payee,
+                    payees = listOf(MERCHANT) + nearby.filter { it.id != status.deviceId },
+                    finding = finding,
+                    onPayee = { payee = it },
+                    onFind = {
+                        finding = true
+                        scope.launch {
+                            runCatching { mesh.discoverNearby() }
+                            finding = false
+                            if (mesh.nearby.value.isEmpty()) say("No BouncePay phones in range")
+                        }
+                    },
                     onAmount = { amountPaise = it },
                     onPay = {
-                        mesh.pay(amountPaise, PAYEE_ID)
-                            .onSuccess { say("Signed ${it.fields.rupees} — it will hop to the bank") }
+                        mesh.pay(amountPaise, payee.id)
+                            .onSuccess { say("Signed ${it.fields.rupees} to ${payee.name} — it will hop to the bank") }
                             .onFailure { say(it.message ?: "Could not sign the payment") }
                     },
                 )
+            }
+
+            val waiting = packets.filter {
+                runCatching { it.packet.fields.payeeId }.getOrNull() == status.deviceId &&
+                    (it.state == PacketState.HELD || it.state == PacketState.FORWARDED)
+            }
+            if (waiting.isNotEmpty() || received.isNotEmpty()) {
+                item { ReceivedCard(waiting, received) }
             }
 
             item {
@@ -459,6 +493,11 @@ private fun PayCard(
     amountPaise: Int,
     walletPaise: Int,
     enabled: Boolean,
+    payee: NearbyPhone,
+    payees: List<NearbyPhone>,
+    finding: Boolean,
+    onPayee: (NearbyPhone) -> Unit,
+    onFind: () -> Unit,
     onAmount: (Int) -> Unit,
     onPay: () -> Unit,
 ) {
@@ -468,13 +507,32 @@ private fun PayCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Column {
-                Text(
-                    "Pay",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(PAYEE_NAME, style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Pay",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(payee.name, style = MaterialTheme.typography.titleMedium)
+                }
+                TextButton(onClick = onFind, enabled = enabled && !finding) {
+                    if (finding) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    else Text("Find nearby")
+                }
+            }
+            // Anyone in range can be paid; the merchant is always there.
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                payees.forEach { option ->
+                    FilterChip(
+                        selected = option.id == payee.id,
+                        onClick = { onPayee(option) },
+                        label = { Text(option.name, maxLines = 1) },
+                    )
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(50_00, 100_00, 250_00, 500_00).forEach { paise ->
@@ -509,6 +567,52 @@ private fun PayCard(
     }
 }
 
+/**
+ * Money coming to this phone. A payment addressed here shows up the moment a
+ * neighbour hands it over — but it is only *received* once the bank's signed
+ * receipt arrives, and only then does it count towards the wallet.
+ */
+@Composable
+private fun ReceivedCard(waiting: List<StoredPacket>, received: List<SignedReceipt>) {
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "Received",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            waiting.forEach { stored ->
+                val f = stored.packet.fields
+                IncomingRow(f.rupees, "from …${f.payerId.takeLast(6)}", "Waiting for the bank", CarryGold)
+            }
+            received.asReversed().forEach { r ->
+                val f = r.fields
+                IncomingRow(MeshNode.rupees(f.amountPaise), "from …${f.payerId.takeLast(6)}", "✓ Confirmed", SettledGreen)
+            }
+        }
+    }
+}
+
+@Composable
+private fun IncomingRow(amount: String, from: String, state: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(amount, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.width(10.dp))
+        Text(
+            from,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(state, style = MaterialTheme.typography.labelMedium, color = color)
+    }
+}
+
 @Composable
 private fun PacketCard(stored: StoredPacket, selfId: String) {
     val fields = runCatching { stored.packet.fields }.getOrNull()
@@ -535,7 +639,11 @@ private fun PacketCard(stored: StoredPacket, selfId: String) {
                 Text(fields?.rupees ?: "—", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    if (mine) "your payment" else "carrying for ${fields?.payerId?.takeLast(6) ?: "?"}",
+                    when {
+                        mine -> "you → ${payeeLabel(fields?.payeeId)}"
+                        fields?.payeeId == selfId -> "paying you"
+                        else -> "carrying for …${fields?.payerId?.takeLast(6) ?: "?"}"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
@@ -582,6 +690,20 @@ private fun SettingsSheet(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Settings", style = MaterialTheme.typography.titleLarge)
+
+        var name by remember { mutableStateOf(settings.displayName) }
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it.take(24) },
+            label = { Text("Your name nearby") },
+            supportingText = { Text("What other phones see when they look for someone to pay") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = { onChange { it.copy(displayName = name.trim()) } },
+            enabled = name.trim() != settings.displayName,
+        ) { Text("Save name") }
 
         OutlinedTextField(
             value = url,

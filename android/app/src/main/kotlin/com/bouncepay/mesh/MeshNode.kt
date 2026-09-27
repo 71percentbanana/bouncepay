@@ -16,6 +16,7 @@ import com.bouncepay.model.Packet
 import com.bouncepay.model.SignedReceipt
 import com.bouncepay.model.PacketState
 import com.bouncepay.store.AppPrefs
+import com.bouncepay.store.IncomingLedger
 import com.bouncepay.store.PacketStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -27,6 +28,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 
@@ -41,6 +45,9 @@ enum class Role {
     /** Cannot settle; hands packets to peers and carries for others. */
     RELAY,
 }
+
+/** A phone seen nearby, and what it calls itself. */
+data class NearbyPhone(val id: String, val name: String)
 
 data class MeshStatus(
     val deviceId: String = "",
@@ -75,6 +82,7 @@ class MeshNode(
 ) {
     val prefs = AppPrefs(context)
     val store = PacketStore(context)
+    val incoming = IncomingLedger(context)
 
     val deviceId: String = DeviceKey.accountId()
 
@@ -82,9 +90,13 @@ class MeshNode(
     private val embeddedBank = EmbeddedBank(context)
     private val bluetooth = context.getSystemService(BluetoothManager::class.java)
 
+    fun displayName(): String =
+        prefs.current.displayName.ifBlank { android.os.Build.MODEL ?: "Android phone" }
+
     private val peripheral = MeshPeripheral(
         context = context,
         deviceId = deviceId,
+        profile = { JSONObject().put("id", deviceId).put("name", displayName()).toString() },
         onPacket = { packet, from -> onPacketReceived(packet, from) },
         onReceipts = { receipts, from -> onReceiptsReceived(receipts, from) },
     )
@@ -97,7 +109,16 @@ class MeshNode(
         receipts = receipts,
         bankKey = { prefs.current.bankPubKey },
         refund = ::refund,
+        onPaid = ::onPaid,
     )
+
+    /** Who is in range, by BLE address, learned from every connection. */
+    private val names = ConcurrentHashMap<String, NearbyPhone>()
+    private val _nearby = MutableStateFlow<List<NearbyPhone>>(emptyList())
+    val nearby: StateFlow<List<NearbyPhone>> = _nearby.asStateFlow()
+
+    /** One scan or GATT exchange at a time, whether from the loop or the UI. */
+    private val radio = Mutex()
 
     /**
      * BLE address → account id, learned from every connection.
@@ -142,6 +163,7 @@ class MeshNode(
      * balance, but only after the packet has crossed the mesh.
      */
     fun pay(amountPaise: Int, payeeId: String): Result<Packet> {
+        if (payeeId == deviceId) return Result.failure(IllegalArgumentException("That is this phone"))
         if (!prefs.tryDebit(amountPaise)) {
             val wallet = prefs.current.walletPaise
             return Result.failure(IllegalStateException(
@@ -203,6 +225,26 @@ class MeshNode(
 
     private fun refund(amountPaise: Int) =
         prefs.update { it.copy(walletPaise = it.walletPaise + amountPaise) }
+
+    /**
+     * The bank has proven a payment to this phone. Credit it once: the same
+     * receipt arrives from several neighbours.
+     */
+    private fun onPaid(receipt: SignedReceipt) {
+        if (!incoming.record(receipt)) return
+        val amount = receipt.fields.amountPaise
+        prefs.update { it.copy(walletPaise = it.walletPaise + amount) }
+        _status.update { it.copy(activity = "Received ${rupees(amount)} · confirmed by the bank") }
+    }
+
+    /**
+     * Looks for phones in range right now, for the payee list. Also hands on
+     * anything they need while connected, like any other pass.
+     */
+    suspend fun discoverNearby() {
+        val isBridge = _status.value.role != Role.RELAY
+        exchangeWithPeers(router.toForward(isBridge), receipts.fresh())
+    }
 
     private fun onPacketReceived(packet: Packet, from: String) {
         // A relay accepts blind. It has no way to judge the payment, so its only
@@ -327,21 +369,28 @@ class MeshNode(
      * route is how a packet finds the bridge fastest, and the bank settles
      * exactly one of them.
      */
-    private suspend fun exchangeWithPeers(packets: List<Packet>, toShare: List<SignedReceipt>) {
+    private suspend fun exchangeWithPeers(packets: List<Packet>, toShare: List<SignedReceipt>) =
+        radio.withLock { exchangeLocked(packets, toShare) }
+
+    private suspend fun exchangeLocked(packets: List<Packet>, toShare: List<SignedReceipt>) {
         // Android silently drops scans started more than five times in thirty
         // seconds, so a burst of taps must not turn into a burst of scans.
         val sinceLast = System.currentTimeMillis() - lastScanAt
         if (sinceLast < MIN_SCAN_GAP_MS) delay(MIN_SCAN_GAP_MS - sinceLast)
 
         _status.update {
-            it.copy(activity = if (packets.isEmpty()) "Passing ${toShare.size} bank receipt(s) back · scanning…"
-                               else "Holding ${packets.size} · scanning for peers…")
+            it.copy(activity = when {
+                packets.isNotEmpty() -> "Holding ${packets.size} · scanning for peers…"
+                toShare.isNotEmpty() -> "Passing ${toShare.size} bank receipt(s) back · scanning…"
+                else -> "Looking for phones nearby…"
+            })
         }
         lastScanAt = System.currentTimeMillis()
         val peers = central.scan(SCAN_DURATION_MS)
         _status.update { it.copy(peersInRange = peers.size) }
 
         if (peers.isEmpty()) {
+            _nearby.value = emptyList()
             if (packets.isNotEmpty()) {
                 _status.update { it.copy(activity = "No peers in range · holding ${packets.size} packet(s)") }
             }
@@ -359,7 +408,10 @@ class MeshNode(
 
             val result = central.exchange(peer, ::needs)
             val peerId = result.peerId
-            if (peerId != null) knownPeers[peer.address] = peerId
+            if (peerId != null) {
+                knownPeers[peer.address] = peerId
+                names[peer.address] = NearbyPhone(peerId, result.peerName ?: "Phone ${peerId.takeLast(4)}")
+            }
 
             router.record(result, peer.address)
             packetsHanded += result.packetsSent.size
@@ -371,6 +423,8 @@ class MeshNode(
             }
         }
 
+        _nearby.value = peers.mapNotNull { names[it.address] }.distinctBy { it.id }
+
         _status.update {
             it.copy(activity = when {
                 packetsHanded > 0 && receiptsHanded > 0 ->
@@ -378,6 +432,7 @@ class MeshNode(
                 packetsHanded > 0 -> "Handed on $packetsHanded packet(s) · keeping copies until the bank confirms"
                 receiptsHanded > 0 -> "Passed $receiptsHanded bank receipt(s) back"
                 packets.isNotEmpty() -> "${peers.size} peer(s) nearby, none took it yet · holding"
+                packets.isEmpty() && toShare.isEmpty() -> "${_nearby.value.size} phone(s) nearby"
                 else -> it.activity
             })
         }

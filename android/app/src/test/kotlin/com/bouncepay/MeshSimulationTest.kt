@@ -9,6 +9,7 @@ import com.bouncepay.mesh.ReceiptBook
 import com.bouncepay.model.Packet
 import com.bouncepay.model.PacketState
 import com.bouncepay.model.SignedReceipt
+import com.bouncepay.store.IncomingLedger
 import com.bouncepay.store.PacketStore
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -100,7 +101,13 @@ class MeshSimulationTest {
         var refunded = 0
         val store = PacketStore(tmp.newFile("$name.json").also { it.delete() })
         val book = ReceiptBook()
-        val router = MeshRouter(id, store, book, bankKey = { pinned }, refund = { refunded += it })
+        val incoming = IncomingLedger(tmp.newFile("$name-in.json").also { it.delete() })
+        var credited = 0
+        val router = MeshRouter(
+            id, store, book, bankKey = { pinned }, refund = { refunded += it },
+            // What MeshNode does: credit once per receipt, however often it arrives.
+            onPaid = { if (incoming.record(it)) credited += it.fields.amountPaise },
+        )
 
         /** Signs exactly the way Packet.create does, with this phone's key. */
         fun pay(amountPaise: Int, payee: String = "campus-stationery"): Packet {
@@ -150,7 +157,7 @@ class MeshSimulationTest {
                     if (out.receipts.isNotEmpty()) peer.router.onReceipts(out.receipts)
                     packetTransfers += out.packets.size
                     phone.router.record(
-                        Exchange(peer.id, out.packets.map { it.txId }, out.receipts.map { it.txId }),
+                        Exchange(peer.id, packetsSent = out.packets.map { it.txId }, receiptsSent = out.receipts.map { it.txId }),
                         peerAddress = "addr-${peer.name}",
                     )
                 }
@@ -278,6 +285,38 @@ class MeshSimulationTest {
         mesh.runUntil { a.state(tx) == PacketState.SETTLED }
         assertEquals(PacketState.SETTLED, a.state(tx))
         assertEquals(40_00, mesh.bank.balances["campus-stationery"])
+    }
+
+    @Test
+    fun `a phone paid by its neighbour sees it at once and is credited once the bank confirms`() {
+        val mesh = Mesh(FakeBank())
+        val a = mesh.phone("A"); val p = mesh.phone("P"); val b = mesh.phone("B"); val c = mesh.phone("C")
+        // P is next to A; both offline. Two routes lead to the bridge, so the
+        // receipt reaches P more than once.
+        mesh.link(a, p); mesh.link(p, b); mesh.link(a, c); mesh.link(c, b)
+        mesh.bridges += "B"
+
+        val tx = a.pay(150_00, payee = p.id).txId
+        mesh.round()
+        assertTrue("P holds the payment before any bank has seen it", p.store.find(tx) != null)
+
+        mesh.runUntil { p.credited > 0 && a.state(tx) == PacketState.SETTLED }
+        repeat(5) { mesh.round() }                           // let every copy of the receipt arrive
+
+        assertEquals("credited exactly once", 150_00, p.credited)
+        assertEquals(1, p.incoming.received.value.size)
+        assertEquals("P's account holds its float plus the payment", 2_000_00 + 150_00, mesh.bank.balances[p.id])
+        assertEquals(0, a.credited)
+    }
+
+    @Test
+    fun `a forged receipt naming the payee credits nothing`() {
+        val mesh = Mesh(FakeBank())
+        val a = mesh.phone("A"); val p = mesh.phone("P")
+        val payload = """{"v":1,"kind":"receipt","txId":"${UUID.randomUUID()}","amountPaise":199900,""" +
+            """"payerId":"${a.id}","payeeId":"${p.id}","settledAt":1790000000000}"""
+        p.router.onReceipts(listOf(SignedReceipt(payload, sign(a.key, payload))))
+        assertEquals(0, p.credited)
     }
 
     @Test

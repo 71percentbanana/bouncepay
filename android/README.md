@@ -43,7 +43,11 @@ emulator's virtual Bluetooth says nothing about range or radio behaviour.
    - **B — relay**: Force offline on
    - **C — bridge**: Force offline off, on the laptop's Wi-Fi
 5. On A, tap **Pay**. Watch the packet go A → B → C and land on the
-   dashboard with its route.
+   dashboard with its route; a moment later A shows it settled, with the
+   bank's receipt, while still offline.
+6. To pay a person instead of the merchant: on A, **Find nearby**, pick B,
+   pay. B shows it under *Received* at once, and confirmed once the receipt
+   comes back from C.
 
 *Force offline* is more dependable than airplane mode, which switches
 Bluetooth off on many phones.
@@ -67,7 +71,8 @@ Pay  ─►  Packet.create  ─►  PacketStore  ─►  MeshNode loop (every 6 
 | `crypto/DeviceKey.kt` | P-256 key in Android Keystore; never leaves the device. Account id = `bp_` + first 8 bytes of SHA-256(public key) |
 | `model/Packet.kt` | Signed payload (opaque string, never re-serialised) + unsigned hop list |
 | `store/PacketStore.kt` | Store-and-forward queue, written atomically to disk on every change |
-| `store/AppPrefs.kt` | Bank URL, force-offline, fallback, offline wallet |
+| `store/AppPrefs.kt` | Bank URL, force-offline, fallback, offline wallet, display name, pinned bank key |
+| `store/IncomingLedger.kt` | Bank-proven payments to this phone, each credited once |
 | `ble/BleIds.kt` | Service/characteristic UUIDs and chunk framing |
 | `ble/MeshPeripheral.kt` | GATT server + advertiser: receives packets |
 | `ble/MeshCentral.kt` | Scanner + GATT client: sends packets, one awaited operation at a time |
@@ -86,9 +91,10 @@ exposes two characteristics:
 - `…0002` **write** — the packet, split into chunks framed as
   `[index u16][count u16][bytes]`, since a packet (~800 bytes) exceeds even a
   517-byte MTU.
-- `…0003` **read** — the phone's account id. A sender reads it first and
-  skips any phone already in the packet's hop list, so a packet never
-  ping-pongs between two phones in range of each other.
+- `…0003` **read** — the phone's profile, `{"id":"bp_…","name":"…"}`. A
+  sender reads it first and skips any phone already in the packet's hop list,
+  so a packet never ping-pongs between two phones in range of each other. The
+  name is what appears in other phones' payee list.
 - `…0004` **write** — a batch of bank-signed receipts, chunked the same way.
 
 One connection per neighbour carries everything it still needs: packets it
@@ -116,6 +122,20 @@ In the three-phone demo, A flips from *Handed on* to *Settled* with
 still forced offline. The on-device fallback bank issues no signed receipts,
 so its settlements are not passed back.
 
+### Paying a phone next to you
+
+Any BouncePay phone in range can be paid, not just the merchant. **Find
+nearby** lists phones by the name set in Settings; phones met while relaying
+appear there too. The payment travels like any other — usually through the
+payee's own phone first, since it is the nearest — and the bank opens the
+payee's account on first settlement if it has none.
+
+The payee sees it straight away under **Received** as *waiting for the bank*,
+because it is holding the signed packet. It becomes *✓ Confirmed*, and is
+added to the payee's offline wallet, only when the bank's signed receipt
+reaches it — once, however many neighbours pass the same receipt on. A packet
+alone proves nothing about whether the payer can pay; the receipt does.
+
 ### Guard rails on the phone
 
 - **Offline wallet**: the app will not sign beyond what was loaded while
@@ -141,7 +161,10 @@ It checks that:
 - a refused payment returns to the payer's wallet, and nothing is lost while
   the bank is down;
 - on a 4×4 grid the payment gets from one corner to a bridge in the other,
-  with each phone passing it to each neighbour at most once.
+  with each phone passing it to each neighbour at most once;
+- a phone paid by its neighbour holds the payment at once and is credited
+  exactly once when the receipt arrives by two routes, and a forged receipt
+  credits nothing.
 
 Disabling the loop check or the receipt verification in `MeshRouter` makes
 these tests fail — they were checked that way.

@@ -31,6 +31,8 @@ import com.bouncepay.model.SignedReceipt
 class MeshPeripheral(
     private val context: Context,
     private val deviceId: String,
+    /** What a peer reads from CHAR_DEVICE_ID: `{"id":…,"name":…}`. */
+    private val profile: () -> String,
     private val onPacket: (Packet, fromAddress: String) -> Unit,
     private val onReceipts: (List<SignedReceipt>, fromAddress: String) -> Unit,
 ) {
@@ -91,7 +93,7 @@ class MeshPeripheral(
             characteristic: BluetoothGattCharacteristic,
         ) {
             if (characteristic.uuid == BleIds.CHAR_DEVICE_ID) {
-                val value = deviceId.toByteArray(Charsets.UTF_8)
+                val value = profile().toByteArray(Charsets.UTF_8)
                 val slice = if (offset >= value.size) ByteArray(0)
                             else value.copyOfRange(offset, value.size)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, slice)

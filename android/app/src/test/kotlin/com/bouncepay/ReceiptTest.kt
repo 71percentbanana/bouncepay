@@ -2,6 +2,7 @@ package com.bouncepay
 
 import com.bouncepay.mesh.ReceiptBook
 import com.bouncepay.model.SignedReceipt
+import com.bouncepay.store.IncomingLedger
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -73,5 +74,18 @@ class ReceiptTest {
 
         now = 1_001
         assertEquals("forgotten after its time is up", 0, book.fresh().size)
+    }
+
+    @Test
+    fun `money received is recorded once and survives a restart`() {
+        val file = File.createTempFile("incoming", ".json").apply { delete(); deleteOnExit() }
+        val ledger = IncomingLedger(file)
+        assertTrue(ledger.record(receipt))
+        assertFalse("the same receipt from another neighbour is not new money", ledger.record(receipt))
+
+        val reopened = IncomingLedger(file)
+        assertEquals(1, reopened.received.value.size)
+        assertFalse(reopened.record(receipt))
+        assertTrue(reopened.received.value.single().verifiedBy(bankKey))
     }
 }

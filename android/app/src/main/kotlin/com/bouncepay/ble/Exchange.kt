@@ -15,6 +15,8 @@ data class Outgoing(val packets: List<Packet>, val receipts: List<SignedReceipt>
  */
 data class Exchange(
     val peerId: String?,
+    /** What the peer calls itself, if it said. */
+    val peerName: String? = null,
     val packetsSent: List<String> = emptyList(),
     val receiptsSent: List<String> = emptyList(),
     val error: String? = null,

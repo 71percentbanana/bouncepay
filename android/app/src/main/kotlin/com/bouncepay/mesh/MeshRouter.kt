@@ -25,6 +25,11 @@ class MeshRouter(
     private val bankKey: () -> String?,
     /** Returns spend to this phone's offline wallet. */
     private val refund: (amountPaise: Int) -> Unit,
+    /**
+     * A bank-proven payment *to* this phone. May be called more than once for
+     * the same receipt; the receiver de-duplicates.
+     */
+    private val onPaid: (SignedReceipt) -> Unit = {},
 ) {
 
     /**
@@ -59,6 +64,7 @@ class MeshRouter(
             }
             if (receipts.add(receipt)) news = true
             if (verified && applyReceipt(receipt, "settled · bank receipt came back over the mesh")) settledHere++
+            if (verified && receipt.fields.payeeId == selfId) onPaid(receipt)
         }
         return ReceiptIntake(news, settledHere, dropped)
     }
@@ -93,7 +99,10 @@ class MeshRouter(
                     )
                     // Send the proof back the way the packet came, so the
                     // payer — still offline — finds out.
-                    result.proof?.let { receipts.add(it) }
+                    result.proof?.let {
+                        receipts.add(it)
+                        if (fields.payeeId == selfId) onPaid(it)
+                    }
                 }
                 is Settlement.Rejected -> {
                     // A refusal is final: carrying it further cannot help.

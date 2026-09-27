@@ -202,10 +202,11 @@ private class GattSession(
         val mtu = mtuReady.await()
 
         val idChar = service.getCharacteristic(BleIds.CHAR_DEVICE_ID)
-        val peerId = if (idChar != null && gatt!!.readCharacteristic(idChar)) {
+        val raw = if (idChar != null && gatt!!.readCharacteristic(idChar)) {
             peerIdRead.await()
         } else null
-        progress = Exchange(peerId)
+        val (peerId, peerName) = parseProfile(raw)
+        progress = Exchange(peerId, peerName)
 
         if (peerId == selfId) return progress.copy(error = "that is us")
 
@@ -232,6 +233,16 @@ private class GattSession(
         }
 
         return progress
+    }
+
+    /** `{"id":…,"name":…}`, or a bare id from builds before names existed. */
+    private fun parseProfile(raw: String?): Pair<String?, String?> {
+        if (raw.isNullOrBlank()) return null to null
+        if (!raw.trimStart().startsWith("{")) return raw to null
+        return runCatching {
+            val o = org.json.JSONObject(raw)
+            o.getString("id") to o.optString("name").ifBlank { null }
+        }.getOrDefault(null to null)
     }
 
     /** Writes [data] as chunks, each awaited before the next. Null on success. */
