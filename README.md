@@ -1,5 +1,7 @@
 # BouncePay
 
+[![CI](https://github.com/71percentbanana/bouncepay/actions/workflows/ci.yml/badge.svg)](https://github.com/71percentbanana/bouncepay/actions/workflows/ci.yml)
+
 **Payments that bounce until they connect.**
 
 A payment created on a phone with no internet hops over Bluetooth Low Energy
