@@ -51,6 +51,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -361,7 +362,12 @@ private fun MeshScreen(mesh: MeshNode) {
     }
 
     if (showSettings) {
-        ModalBottomSheet(onDismissRequest = { showSettings = false }) {
+        // Fully open: the switches are the point of this sheet and should
+        // not sit below the fold; Back then closes it in one press.
+        ModalBottomSheet(
+            onDismissRequest = { showSettings = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
             SettingsSheet(
                 settings = settings,
                 onChange = { transform ->
@@ -770,7 +776,7 @@ private fun SettingsSheet(
             settings.bankPubKey?.let { "Bank key pinned · …${it.takeLast(10)}" }
                 ?: "Bank key not pinned yet — reach the bank once to trust its receipts",
             style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = if (settings.bankPubKey != null) FontFamily.Monospace else null,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
