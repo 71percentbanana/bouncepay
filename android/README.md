@@ -205,8 +205,9 @@ phone came back online; and the signed receipt appearing on each payment.
 
 ## Status
 
-- **Tested on the JVM** (37 tests, run in CI on every push): chunking, UUIDs,
-  the packet envelope, bank-signed receipts, the mesh simulation above, a
+- **Tested on the JVM** (44 tests, run in CI on every push): chunking, UUIDs,
+  the packet envelope, the on-disk queue, the fallback bank's rules,
+  bank-signed receipts, the mesh simulation above, a
   JVM-signed packet that the Node bank verifies byte-for-byte, and — in four
   of them — the phone's bank client against the real Node bank over HTTP.
 - **Run on an emulator** against the real bank: Keystore signing,

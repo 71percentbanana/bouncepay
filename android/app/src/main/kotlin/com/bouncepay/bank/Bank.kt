@@ -172,11 +172,15 @@ class RemoteBank(private val baseUrl: String) : Bank {
  * It is only consulted by a device acting as the bridge when the real bank
  * does not answer, and every settlement it makes is labelled as such.
  */
-class EmbeddedBank(context: Context) : Bank {
+class EmbeddedBank(
+    private val file: File,
+    private val clock: () -> Long = System::currentTimeMillis,
+) : Bank {
+
+    constructor(context: Context) : this(File(context.filesDir, "embedded-bank.json"))
 
     override val label = "On-device bank"
 
-    private val file = File(context.filesDir, "embedded-bank.json")
     private val lock = Any()
 
     private val settled = HashMap<String, Int>()   // txId -> payee balance afterwards
@@ -212,7 +216,7 @@ class EmbeddedBank(context: Context) : Bank {
         if (fields.payerId != DeviceKey.accountIdFor(packet.payerPubKey)) {
             return Settlement.Rejected("KEY_MISMATCH", "payer does not own the signing key")
         }
-        val age = System.currentTimeMillis() - fields.createdAt
+        val age = clock() - fields.createdAt
         if (age > MAX_AGE_MS) {
             return Settlement.Rejected("EXPIRED", "packet is ${age / 86_400_000} days old")
         }
