@@ -50,6 +50,15 @@ class MeshPeripheral(
      */
     private val assemblers = HashMap<String, Chunking.Assembler>()
 
+    /**
+     * Long writes in progress, by peer. Chunks are sized to fit one write, so
+     * this should stay empty — but some stacks split writes anyway.
+     */
+    private class PreparedWrite(val uuid: java.util.UUID) {
+        val bytes = java.io.ByteArrayOutputStream()
+    }
+    private val prepared = HashMap<String, PreparedWrite>()
+
     var isAdvertising: Boolean = false
         private set
 
@@ -75,6 +84,7 @@ class MeshPeripheral(
                 // Drop partial transfers: a peer that vanished mid-packet will
                 // start again from chunk zero when it comes back.
                 synchronized(assemblers) { assemblers.keys.removeAll { it.startsWith(device.address) } }
+                synchronized(prepared) { prepared.remove(device.address) }
             }
         }
 
@@ -118,12 +128,35 @@ class MeshPeripheral(
                 return
             }
 
+            if (preparedWrite) {
+                // One frame split by the peer's stack into a long write: hold
+                // the pieces until it says execute. The response must echo
+                // the value, or the peer treats it as corrupted.
+                synchronized(prepared) {
+                    val buffer = prepared.getOrPut(device.address) { PreparedWrite(uuid) }
+                    buffer.bytes.write(value)
+                }
+                if (responseNeeded) {
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
+                }
+                return
+            }
+
             // Acknowledge before parsing. The sender is blocked waiting on this
             // response and will time out the whole transfer if work happens first.
             if (responseNeeded) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
             }
+            acceptFrame(device, uuid, value)
+        }
 
+        override fun onExecuteWrite(device: BluetoothDevice, requestId: Int, execute: Boolean) {
+            val pending = synchronized(prepared) { prepared.remove(device.address) }
+            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+            if (execute && pending != null) acceptFrame(device, pending.uuid, pending.bytes.toByteArray())
+        }
+
+        private fun acceptFrame(device: BluetoothDevice, uuid: java.util.UUID, value: ByteArray) {
             val complete = synchronized(assemblers) {
                 assemblers.getOrPut("${device.address}/$uuid") { Chunking.Assembler() }.accept(value)
             } ?: return

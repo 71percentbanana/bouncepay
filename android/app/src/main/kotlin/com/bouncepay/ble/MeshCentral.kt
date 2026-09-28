@@ -22,6 +22,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class Peer(val device: BluetoothDevice, val rssi: Int) {
     val address: String get() = device.address
@@ -197,13 +198,18 @@ private class GattSession(
         val service = gatt!!.getService(BleIds.SERVICE)
             ?: return Exchange(null, error = "peer does not run BouncePay")
 
-        // Bigger MTU means fewer round trips; failure is survivable.
-        gatt!!.requestMtu(BleIds.DESIRED_MTU)
-        val mtu = mtuReady.await()
+        // Bigger MTU means fewer round trips; failure is survivable. Some
+        // stacks never answer the request at all, so don't wait long for it —
+        // the default MTU just means more, smaller chunks.
+        val mtu = if (gatt!!.requestMtu(BleIds.DESIRED_MTU)) {
+            withTimeoutOrNull(MTU_WAIT_MS) { mtuReady.await() } ?: GATT_DEFAULT_MTU
+        } else {
+            GATT_DEFAULT_MTU
+        }
 
         val idChar = service.getCharacteristic(BleIds.CHAR_DEVICE_ID)
         val raw = if (idChar != null && gatt!!.readCharacteristic(idChar)) {
-            peerIdRead.await()
+            withTimeoutOrNull(ID_READ_WAIT_MS) { peerIdRead.await() }
         } else null
         val (peerId, peerName) = parseProfile(raw)
         progress = Exchange(peerId, peerName)
@@ -278,5 +284,7 @@ private class GattSession(
 
     companion object {
         const val GATT_DEFAULT_MTU = 23
+        const val MTU_WAIT_MS = 3_000L
+        const val ID_READ_WAIT_MS = 5_000L
     }
 }
