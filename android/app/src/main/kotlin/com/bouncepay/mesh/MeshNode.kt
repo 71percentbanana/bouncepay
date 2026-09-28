@@ -193,7 +193,7 @@ class MeshNode(
         val remote = RemoteBank(settings.bankUrl)
 
         if (!settings.forceOffline && context.hasNetwork()) {
-            val enrolled = remote.enroll(openingPaise)
+            val enrolled = remote.enroll(openingPaise, label = displayName())
             enrolled.getOrNull()?.let { e ->
                 // The bank's balance has not yet seen payments still in flight
                 // from this phone; leave room for them or they would be spent twice.

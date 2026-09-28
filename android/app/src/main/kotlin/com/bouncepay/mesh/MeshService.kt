@@ -63,13 +63,14 @@ class MeshService : LifecycleService() {
                 }
                 val role = when (status.role) {
                     Role.BRIDGE -> "Bridge"
-                    Role.BRIDGE_FALLBACK -> "Bridge (fallback)"
+                    Role.BRIDGE_FALLBACK -> "Bridge (fallback bank)"
                     Role.RELAY -> "Relay"
                 }
-                "$role · carrying $carrying · ${status.activity}"
-            }.distinctUntilChanged().collect { text ->
+                val text = if (carrying > 0) "Carrying $carrying · ${status.activity}" else status.activity
+                "BouncePay · $role" to text
+            }.distinctUntilChanged().collect { (title, text) ->
                 getSystemService(NotificationManager::class.java)
-                    ?.notify(NOTIFICATION_ID, buildNotification(text))
+                    ?.notify(NOTIFICATION_ID, buildNotification(text, title))
             }
         }
     }
@@ -99,7 +100,7 @@ class MeshService : LifecycleService() {
         )
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildNotification(text: String, title: String = "BouncePay mesh is on"): Notification {
         val open = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -112,7 +113,7 @@ class MeshService : LifecycleService() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bounce)
-            .setContentTitle("BouncePay mesh is on")
+            .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(open)

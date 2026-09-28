@@ -320,6 +320,27 @@ class MeshSimulationTest {
     }
 
     @Test
+    fun `a payment made and settled on the same phone is not gossiped`() {
+        val mesh = Mesh(FakeBank())
+        val a = mesh.phone("A"); val b = mesh.phone("B")
+        mesh.link(a, b)
+        mesh.bridges += "A"                                  // online: pays and settles itself
+
+        val tx = a.pay(100_00).txId
+        mesh.round()
+
+        assertEquals(PacketState.SETTLED, a.state(tx))
+        assertTrue("nobody else is waiting, so no receipt to pass on", a.book.fresh().isEmpty())
+
+        // Paying a phone is different: the payee is waiting for it.
+        val toB = a.pay(50_00, payee = b.id).txId
+        mesh.round()
+        assertEquals(PacketState.SETTLED, a.state(toB))
+        mesh.round()
+        assertEquals(50_00, b.credited)
+    }
+
+    @Test
     fun `a crowd of phones gets one payment through exactly once`() {
         val mesh = Mesh(FakeBank())
         // A 4x4 grid: each phone hears its horizontal and vertical neighbours.

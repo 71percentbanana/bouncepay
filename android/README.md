@@ -13,6 +13,17 @@ for. Nothing is configured as a "relay" or a "bridge".
 | not reach the bank | is a **relay**: hands packets to nearby phones, carries others' |
 | do nothing yet | advertises, so others can hand it packets |
 
+<table>
+<tr>
+<td><img src="docs/offline-holding.png" width="260" alt="Paid ₹250 while offline: the phone holds the signed packet"></td>
+<td><img src="docs/back-online-settled.png" width="260" alt="Back online: the same payment settled, with the bank's signed receipt"></td>
+</tr>
+<tr>
+<td>Paid while offline — signed, held, wallet debited</td>
+<td>Back online — settled, with the bank's signed receipt</td>
+</tr>
+</table>
+
 ## Build
 
 Requires JDK 17 and the Android SDK (platform 36). Gradle is fetched by the
@@ -174,10 +185,23 @@ on a free port and drives it with `RemoteBank`, the code a bridge phone runs:
 enrolment, settlement with a verifiable proof, duplicates, refusal codes, and
 an absent bank. It is skipped where Node is not installed.
 
+## Run on an emulator
+
+Screenshots above are from the app running on the Android 16 (API 36)
+emulator against the real mock bank on the same machine, which the emulator
+reaches as `http://10.0.2.2:4000`. That run exercised: permissions and the
+foreground service; the GATT server and advertising starting; enrolment;
+Keystore-signed payments verified and settled by the Node bank; a payment
+made under *Force offline* being held, then settling by itself when the
+phone came back online; and the signed receipt appearing on each payment.
+
 ## Status
 
-Built and unit-tested: chunking, UUIDs, the packet envelope, a JVM-signed
-packet that the Node bank verifies byte-for-byte, and a bank-signed receipt
-that the phone's code verifies (and rejects when altered or signed by
-another key). The Bluetooth path has not
-yet been exercised on physical phones; that needs two or more handsets.
+- **Tested on the JVM** (37 tests, run in CI on every push): chunking, UUIDs,
+  the packet envelope, bank-signed receipts, the mesh simulation above, a
+  JVM-signed packet that the Node bank verifies byte-for-byte, and — in four
+  of them — the phone's bank client against the real Node bank over HTTP.
+- **Run on an emulator** against the real bank: Keystore signing,
+  enrolment, settlement, store-and-forward and receipts.
+- **Not yet tried**: phone-to-phone transfer over Bluetooth on physical
+  handsets. That needs two or more of them, and is the next thing to do.

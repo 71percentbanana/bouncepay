@@ -98,9 +98,11 @@ class MeshRouter(
                         result.proof,
                     )
                     // Send the proof back the way the packet came, so the
-                    // payer — still offline — finds out.
+                    // payer — still offline — finds out. Only worth it if
+                    // some other phone is waiting on it: a payment made and
+                    // settled right here has no one to tell.
                     result.proof?.let {
-                        receipts.add(it)
+                        if (othersAwait(packet)) receipts.add(it)
                         if (fields.payeeId == selfId) onPaid(it)
                     }
                 }
@@ -117,6 +119,16 @@ class MeshRouter(
             }
             onEach(packet, result)
         }
+    }
+
+    /**
+     * Whether any other phone wants this packet's receipt: one that signed or
+     * carried it, or a phone being paid. The merchant is a bank account, not
+     * a phone in the mesh.
+     */
+    private fun othersAwait(packet: Packet): Boolean {
+        val payee = packet.fields.payeeId
+        return packet.hops.any { it != selfId } || (payee != selfId && payee.startsWith(PHONE_ACCOUNT_PREFIX))
     }
 
     /** Packets still looking for a way out. A bridge forwards nothing. */
@@ -154,5 +166,10 @@ class MeshRouter(
         val peer = result.peerId ?: peerAddress
         for (txId in result.packetsSent) store.recordHandoff(txId, peer)
         result.peerId?.let { id -> result.receiptsSent.forEach { receipts.markSent(it, id) } }
+    }
+
+    private companion object {
+        /** Account ids derived from a phone's key; see DeviceKey.accountIdFor. */
+        const val PHONE_ACCOUNT_PREFIX = "bp_"
     }
 }
