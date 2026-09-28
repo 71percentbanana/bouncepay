@@ -156,6 +156,14 @@ alone proves nothing about whether the payer can pay; the receipt does.
 - **Scan throttle**: Android silently ignores apps that start more than five
   scans in 30 s, so scans are spaced at least 6.5 s apart.
 
+### Known limits on older Android
+
+On Android 10 and 11, Bluetooth scanning needs the phone's **Location** switch
+on — without it scans silently find nothing, so the app shows a notice. Those
+versions also restrict scanning from the background: such a phone still
+*receives* packets with its screen off, but only hands them on while the app
+is open. Android 12 and later have neither restriction.
+
 ## Testing the mesh without phones
 
 `MeshSimulationTest` wires several real `MeshRouter`s, each over its own

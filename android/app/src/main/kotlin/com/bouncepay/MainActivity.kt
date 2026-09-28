@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -37,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.BluetoothDisabled
+import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.PauseCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -79,6 +81,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.bouncepay.mesh.MeshNode
 import com.bouncepay.mesh.MeshService
 import com.bouncepay.mesh.MeshStatus
@@ -153,6 +156,16 @@ private fun requestedPermissions(): Array<String> =
 
 fun Context.hasBlePermissions(): Boolean = blePermissions().all {
     ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+}
+
+/**
+ * Before Android 12, a BLE scan silently returns nothing while the phone's
+ * location switch is off — no error, just no peers. Worth telling the user.
+ */
+fun Context.scanBlockedByLocation(): Boolean {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return false
+    val manager = getSystemService(LocationManager::class.java) ?: return false
+    return !LocationManagerCompat.isLocationEnabled(manager)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -240,6 +253,20 @@ private fun MeshScreen(mesh: MeshNode) {
                         onAction = {
                             runCatching {
                                 enableBluetooth.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+                            }
+                        },
+                    )
+                }
+            } else if (status.running && context.scanBlockedByLocation()) {
+                item {
+                    Notice(
+                        icon = Icons.Rounded.LocationOff,
+                        title = "Location is off",
+                        body = "On this Android version, Bluetooth can't find nearby phones unless location is on. BouncePay does not use your location.",
+                        action = "Settings",
+                        onAction = {
+                            runCatching {
+                                context.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                             }
                         },
                     )
