@@ -107,7 +107,8 @@ commit them.
 | Routing model, end to end, in the browser | The interactive prototype on the site |
 
 The site's *Built with* section still labels these layers as planned; update
-it once the BLE path has been run on real handsets.
+it once the BLE path has been run on real handsets. Everything still to do is
+in [`TODO.md`](TODO.md).
 
 ## Team
 
