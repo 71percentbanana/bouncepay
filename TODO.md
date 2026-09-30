@@ -6,10 +6,25 @@ this file is everything that isn't.
 
 ## 1. Run the mesh on real phones — blocks everything else
 
-Every link in the chain has been exercised except the one the project is
-about: **a packet crossing from one phone to another over Bluetooth.** Routing
-is simulated on the JVM, and signing, settlement and receipts have run on an
-emulator against the real bank, but no two phones have talked yet.
+The GATT exchange itself now works. On 1 October 2026 the app on an Android 16
+emulator traded packets and receipts over the emulator's virtual Bluetooth
+with [`mock-phone/`](mock-phone/), a second phone written against Bumble. That
+covered *Find nearby*, paying while forced offline and getting the bank's
+receipt back, being paid by a phone and credited once, and MTU 23. It also
+found two framing bugs. One of them made Android refuse **every** packet
+hand-off at the MTU real phones negotiate. Both are fixed in `Chunking` and
+pinned by `ChunkingTest`.
+
+The same day, **app to app** worked too: two emulators on the discrete GPU
+(`-gpu host`, the second with `-memory 1536`). A, forced offline, paid ₹250;
+B, the real app online as a bridge, took the packet over Bluetooth. The bank
+settled it with route A → B, and B's receipt reached A while A was still
+offline. Two emulators only just fit in 13 GB next to a desktop session:
+memory ran short a minute later. So use the mock phone for routine checks.
+
+What is still untested is everything a virtual radio hides: range, real
+radios, two real Android stacks talking, and a relay in a pocket with the
+screen off.
 
 - [ ] Run the three-phone demo in [`android/README.md`](android/README.md#demo-three-phones-one-laptop):
       A pays (Force offline), B relays (Force offline), C bridges on the laptop's Wi-Fi.
@@ -19,10 +34,9 @@ emulator against the real bank, but no two phones have talked yet.
 - [ ] If there is an Android 10 or 11 phone, try it too, with Location on. It can
       only hand packets on while the app is open.
 
-Each phone must support BLE advertising (peripheral mode). A cheaper first
-check is two emulators linked by the emulator's virtual Bluetooth. The laptop
-now has disk space for a second instance. That shows the GATT exchange works
-end to end, but says nothing about range or real radios.
+Each phone must support BLE advertising (peripheral mode). Before a phone
+session, rerun the emulator check in [`mock-phone/README.md`](mock-phone/README.md)
+after any change to the BLE code.
 
 ## 2. Make the site and deck match what's built
 
@@ -57,6 +71,12 @@ Do this once step 1 passes.
 - [ ] The prototype in `public/demo/` is built from a sibling folder
       (`../bouncepay`) that isn't in any repo here, so only this laptop can
       rebuild it. Push it to GitHub and point the README at it.
+- [ ] `scripts/build-demo.mjs` looks for the prototype at `../bouncepay`. A
+      default `git clone` of this repo is itself named `bouncepay`, so on any
+      machine but the one with the `bpay/` folder that path is **this repo**.
+      `npm run build:demo` would then build the site into `public/demo/` with
+      `--emptyOutDir`, wiping the committed prototype. Refuse when the path
+      resolves to the repo itself, or take the path from an environment variable.
 
 ## Known and deliberately out of scope
 

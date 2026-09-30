@@ -19,6 +19,7 @@ Built for iQOO City Battles 2026 · Track 01: Fintech & Commerce.
 | --- | --- |
 | [`android/`](android/) | The Android app — real BLE mesh, Keystore signing, store-and-forward |
 | [`mock-bank/`](mock-bank/) | The settlement service the bridge phone posts to, with a live dashboard |
+| [`mock-phone/`](mock-phone/) | A second phone in Python (Bumble), for testing the app's Bluetooth against one emulator |
 | `index.html` | The marketing site — hand-written HTML/CSS/JS, no framework |
 | `public/demo/` | Build output of the prototype, served at `/demo/` |
 | `scripts/build-demo.mjs` | Builds the prototype and applies the site's theme |
@@ -103,7 +104,7 @@ commit them.
 | Bank-signed receipts passed back through the mesh to an offline payer | Built; verified across Node and Kotlin with a shared fixture |
 | Paying any phone in range, not just a merchant; payee credited on the bank's receipt | Built; simulated in unit tests |
 | Mesh routing: forwarding, loop avoidance, dedup, receipt gossip | Built; simulated across chains, diamonds and a 4×4 grid of phones in unit tests |
-| BLE transport: advertise, scan, GATT transfer with chunking | Built; GATT server, advertising and scanning start on the emulator. **Phone-to-phone transfer not yet tried on physical phones** |
+| BLE transport: advertise, scan, GATT transfer with chunking | Built; packets and receipts exchanged over the emulator's virtual Bluetooth between two emulators running the app, and with [`mock-phone/`](mock-phone/) at MTU 517 and 23. **Not yet tried between physical phones** |
 | Routing model, end to end, in the browser | The interactive prototype on the site |
 
 The site's *Built with* section still labels these layers as planned; update

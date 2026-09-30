@@ -101,7 +101,8 @@ exposes two characteristics:
 
 - `…0002` **write** — the packet, split into chunks framed as
   `[index u16][count u16][bytes]`, since a packet (~800 bytes) exceeds even a
-  517-byte MTU.
+  517-byte MTU. Each frame fits one ATT write: at most MTU − 3 bytes, and never
+  over GATT's 512-byte attribute cap. Android refuses a longer write outright.
 - `…0003` **read** — the phone's profile, `{"id":"bp_…","name":"…"}`. A
   sender reads it first and skips any phone already in the packet's hop list,
   so a packet never ping-pongs between two phones in range of each other. The
@@ -193,6 +194,17 @@ on a free port and drives it with `RemoteBank`, the code a bridge phone runs:
 enrolment, settlement with a verifiable proof, duplicates, refusal codes, and
 an absent bank. It is skipped where Node is not installed.
 
+## Bluetooth against a second phone, with one emulator
+
+[`mock-phone/`](../mock-phone/) is a BouncePay phone written in Python on
+Google's Bumble stack. It joins the emulator's virtual radio (netsim) as a
+second device and speaks the GATT protocol from its own code. Against the
+Android 16 emulator it checked *Find nearby*, paying while forced offline with
+the bank's receipt coming back over Bluetooth, being paid and credited once,
+and a link stuck at MTU 23. It also found that frames were too large at both
+ends of the MTU range. At 517, Android refused every packet hand-off. See its
+README for the steps.
+
 ## Run on an emulator
 
 Screenshots above are from the app running on the Android 16 (API 36)
@@ -205,12 +217,16 @@ phone came back online; and the signed receipt appearing on each payment.
 
 ## Status
 
-- **Tested on the JVM** (44 tests, run in CI on every push): chunking, UUIDs,
+- **Tested on the JVM** (46 tests, run in CI on every push): chunking, UUIDs,
   the packet envelope, the on-disk queue, the fallback bank's rules,
   bank-signed receipts, the mesh simulation above, a
   JVM-signed packet that the Node bank verifies byte-for-byte, and — in four
   of them — the phone's bank client against the real Node bank over HTTP.
 - **Run on an emulator** against the real bank: Keystore signing,
   enrolment, settlement, store-and-forward and receipts.
+- **Run over the emulator's virtual Bluetooth** against `mock-phone/`:
+  discovery, packet hand-off, receipts back to an offline payer, being paid.
+  And app to app between two emulators: an offline payer's packet handed to
+  a bridge, settled with that route, and the receipt returned.
 - **Not yet tried**: phone-to-phone transfer over Bluetooth on physical
   handsets. That needs two or more of them, and is the next thing to do.
