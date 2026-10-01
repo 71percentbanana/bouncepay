@@ -4,6 +4,7 @@ import com.bouncepay.ble.Chunking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
 
@@ -80,6 +81,27 @@ class ChunkingTest {
         val assembler = Chunking.Assembler()
         assertNull(assembler.accept(ByteArray(2)))
         assertNull(assembler.accept(ByteArray(0)))
+    }
+
+    @Test
+    fun `every frame fits in a single ATT write at any MTU`() {
+        // Found against a second device on the emulator's virtual radio: at
+        // MTU 517 frames were 514 bytes, past GATT's 512-byte attribute cap,
+        // so Android refused every hand-off; at MTU 23 they were 24 bytes,
+        // past the 20 one write carries.
+        val data = Random(9).nextBytes(900)
+        for (mtu in listOf(23, 24, 50, 185, 247, 512, 515, 516, 517)) {
+            val frames = Chunking.split(data, mtu)
+            val limit = minOf(mtu - 3, 512)
+            frames.forEach { assertTrue("MTU $mtu: ${it.size}-byte frame, limit $limit", it.size <= limit) }
+            assertArrayEquals(data, roundTrip(data, mtu))
+        }
+    }
+
+    @Test
+    fun `a negotiated MTU still uses big frames`() {
+        assertEquals(512, Chunking.split(Random(10).nextBytes(2000), 517).first().size)
+        assertEquals(20, Chunking.split(Random(11).nextBytes(100), 23).first().size)
     }
 
     @Test

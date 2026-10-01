@@ -58,8 +58,24 @@ object Chunking {
 
     const val HEADER_BYTES = 4
 
-    /** ATT reserves 3 bytes of the MTU for its own header. */
-    fun payloadPerChunk(mtu: Int): Int = (mtu - 3 - HEADER_BYTES).coerceAtLeast(20)
+    /** The smallest ATT MTU there is; what a link has before any exchange. */
+    const val MIN_MTU = 23
+
+    /**
+     * GATT caps an attribute value at 512 bytes whatever the MTU, and Android
+     * throws rather than send a longer write. At the usual 517 MTU that cap,
+     * not the MTU, is the limit.
+     */
+    const val MAX_ATTRIBUTE_BYTES = 512
+
+    /**
+     * The largest frame one ATT write carries: the MTU less ATT's 3-byte
+     * header, and never past the attribute cap. A bigger frame is either
+     * refused outright or split by the stack into a slower long write.
+     */
+    fun maxFrame(mtu: Int): Int = minOf(mtu.coerceAtLeast(MIN_MTU) - 3, MAX_ATTRIBUTE_BYTES)
+
+    fun payloadPerChunk(mtu: Int): Int = maxFrame(mtu) - HEADER_BYTES
 
     fun split(data: ByteArray, mtu: Int): List<ByteArray> {
         val perChunk = payloadPerChunk(mtu)

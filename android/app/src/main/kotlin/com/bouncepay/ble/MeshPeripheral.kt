@@ -24,8 +24,8 @@ import com.bouncepay.model.SignedReceipt
  *
  * Advertising and accepting connections is all a relay needs to do — it never
  * initiates anything to receive. That matters for the story: the stranger
- * carrying your payment does nothing, and their phone cannot read what it is
- * carrying.
+ * carrying your payment does nothing, and their phone cannot alter what it is
+ * carrying. (It can read it: packets are signed, not encrypted.)
  */
 @SuppressLint("MissingPermission")   // callers gate on BLUETOOTH_* at runtime
 class MeshPeripheral(

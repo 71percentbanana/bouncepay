@@ -1,0 +1,4 @@
+bumble==0.0.235
+cryptography>=44
+grpcio>=1.60
+protobuf>=5

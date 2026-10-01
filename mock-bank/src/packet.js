@@ -2,7 +2,7 @@
  * BouncePay payment packet — shared shape and verification.
  *
  * A packet is signed once, on the payer's device, while it is offline. It is
- * then carried by relays that cannot read or alter it, and finally handed to
+ * then carried by relays that can read it but cannot alter it, and finally handed to
  * this service by whichever device reached the internet first.
  *
  * The signature covers `payload`, which travels as an opaque string rather
